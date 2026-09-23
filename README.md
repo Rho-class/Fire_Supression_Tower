@@ -1,3 +1,8 @@
+## Repository Layout
+
+- `computer-vision/` — Fire detection and localization
+- `firmware/` — ESP32 firmware for the IR sensor, motors, and pump
+
 ## Branching Strategy
 
 We use feature branches so multiple team members can work simultaneously while keeping `main` stable.
