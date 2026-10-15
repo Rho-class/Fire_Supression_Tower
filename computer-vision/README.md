@@ -19,7 +19,13 @@ Create the folder for your area when you start that work. Keep shared camera or 
 
 ## Setup
 
-Camera, model, and libraries are not chosen yet. When they are, record them here: language, key packages, how to install dependencies, and how to run detection on a sample image or video.
+Fire detection uses Python, OpenCV, Ultralytics YOLO26, and a Logitech USB
+webcam on a CUDA-capable Windows laptop. The dedicated one-class flame model,
+training instructions, and webcam test are documented in
+`fire-detection/README.md`.
+
+Fire localization is still separate and has not yet been scaffolded. The
+detector exposes flame bounding-box and center-pixel coordinates for that work.
 
 ## Workflow
 

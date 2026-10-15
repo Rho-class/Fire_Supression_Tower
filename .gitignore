@@ -1,0 +1,17 @@
+# Python environments, caches, and local configuration
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+
+# Generated datasets, training/inference runs, and model exports
+runs/
+datasets/
+*.pt
+*.engine
+*.onnx
+
+# Downloaded shared model weights
+weights/
