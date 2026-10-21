@@ -1,7 +1,8 @@
 param(
     [string]$RunDirectory = ".\runs\candle_yolo_public_960",
     [int]$PlannedEpochs = 120,
-    [int]$RefreshSeconds = 5
+    [int]$RefreshSeconds = 5,
+    [int]$EarlyStoppingPatience = 25
 )
 
 $resolvedRun = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $RunDirectory))
@@ -13,7 +14,7 @@ while ($true) {
     Write-Host "Updated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     Write-Host "Run: $resolvedRun"
     Write-Host "Planned maximum: $PlannedEpochs epochs"
-    Write-Host "Early stopping: 25 epochs without validation improvement"
+    Write-Host "Early stopping: $EarlyStoppingPatience epochs without validation improvement"
     Write-Host ""
 
     if (Test-Path $resultsFile) {
@@ -21,7 +22,7 @@ while ($true) {
         if ($rows.Count -gt 0) {
             $last = $rows[-1]
             $epochProperty = $last.PSObject.Properties.Name | Where-Object { $_.Trim() -eq "epoch" } | Select-Object -First 1
-            $epoch = if ($epochProperty) { [int]$last.$epochProperty + 1 } else { $rows.Count }
+            $epoch = if ($epochProperty) { [int]$last.$epochProperty } else { $rows.Count }
             $percent = [math]::Round(100 * $epoch / $PlannedEpochs, 1)
             Write-Host "Completed epochs: $epoch / $PlannedEpochs ($percent%)" -ForegroundColor Green
             Write-Host ""

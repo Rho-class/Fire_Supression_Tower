@@ -16,6 +16,7 @@ DEFAULT_ENGINE_MODEL = HERE / "runs" / "candle_yolo" / "weights" / "best.engine"
 CONFIRMATION_FRAMES = 3
 CONFIDENCE_THRESHOLD = 0.30
 IOU_THRESHOLD = 0.35
+WINDOW_TITLE = "Fire Tower - Candle Flame Detector"
 
 
 class DetectedFlame(TypedDict):
@@ -121,6 +122,8 @@ def run_webcam(
     capture_width: int,
     capture_height: int,
     capture_fps: int,
+    display_width: int,
+    display_height: int,
 ) -> FlameDetection:
     """Run until Q is pressed and return the most recent flame result."""
     global latest_detection
@@ -161,6 +164,12 @@ def run_webcam(
             f"Warning: requested {capture_width}x{capture_height}, but the camera "
             f"selected {actual_width}x{actual_height}."
         )
+    cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_TITLE, display_width, display_height)
+    print(
+        f"Display window: {display_width}x{display_height} "
+        f"(detection still uses the full {actual_width}x{actual_height} camera frame)"
+    )
     print("Press Q in the camera window to close.")
 
     consecutive_frames = 0
@@ -224,7 +233,7 @@ def run_webcam(
             overlay = f"{width}x{height}  FPS: {fps:.1f}"
             cv2.putText(frame, overlay, (max(width - 245, 10), 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
-            cv2.imshow("Fire Tower - Candle Flame Detector", frame)
+            cv2.imshow(WINDOW_TITLE, frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
     finally:
@@ -244,6 +253,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--display-width", type=int, default=1280)
+    parser.add_argument("--display-height", type=int, default=720)
     return parser.parse_args()
 
 
@@ -258,6 +269,8 @@ def main() -> None:
         args.width,
         args.height,
         args.fps,
+        args.display_width,
+        args.display_height,
     )
 
 
