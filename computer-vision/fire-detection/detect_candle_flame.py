@@ -9,11 +9,14 @@ from typing import Any, TypedDict
 
 import cv2
 
+from config import CONFIRMATION_FRAMES, DEADZONE_X, DEADZONE_Y, SIMULATION_MODE
+from motor_interface import send_motor_command
+from target_tracking import ProportionalFlameTracker, TrackingResult, TrackingState
+
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_PT_MODEL = HERE / "runs" / "candle_yolo" / "weights" / "best.pt"
 DEFAULT_ENGINE_MODEL = HERE / "runs" / "candle_yolo" / "weights" / "best.engine"
-CONFIRMATION_FRAMES = 3
 CONFIDENCE_THRESHOLD = 0.30
 IOU_THRESHOLD = 0.35
 WINDOW_TITLE = "Fire Tower - Candle Flame Detector"
@@ -113,6 +116,70 @@ def strongest_flame(result: Any, confirmed: bool = False) -> FlameDetection:
     return best
 
 
+def safe_stop_motors() -> None:
+    """Best-effort fail-safe used on shutdown and exception paths."""
+    try:
+        send_motor_command(0.0, 0.0, simulation_mode=SIMULATION_MODE)
+    except Exception as exc:  # Hardware output is intentionally not implemented yet.
+        print(f"Motor stop warning: {exc}")
+
+
+def draw_tracking_debug(
+    frame: Any,
+    tracking: TrackingResult,
+    target_x: int | None,
+    target_y: int | None,
+) -> None:
+    """Draw camera center, deadband, target error, and controller output."""
+    height, width = frame.shape[:2]
+    center_x = width // 2
+    center_y = height // 2
+    deadzone_left = max(0, int(center_x - DEADZONE_X))
+    deadzone_right = min(width - 1, int(center_x + DEADZONE_X))
+    deadzone_top = max(0, int(center_y - DEADZONE_Y))
+    deadzone_bottom = min(height - 1, int(center_y + DEADZONE_Y))
+
+    cv2.rectangle(
+        frame,
+        (deadzone_left, deadzone_top),
+        (deadzone_right, deadzone_bottom),
+        (255, 255, 0),
+        2,
+    )
+    cv2.drawMarker(
+        frame,
+        (center_x, center_y),
+        (255, 255, 0),
+        cv2.MARKER_CROSS,
+        24,
+        2,
+    )
+
+    if target_x is not None and target_y is not None:
+        cv2.line(frame, (center_x, center_y), (target_x, target_y), (255, 0, 255), 2)
+
+    error_x = "N/A" if tracking.error_x is None else f"{tracking.error_x:+.1f}"
+    error_y = "N/A" if tracking.error_y is None else f"{tracking.error_y:+.1f}"
+    details = (
+        f"State: {tracking.state.value}  "
+        f"Confirm: {tracking.confirmation_count}/{CONFIRMATION_FRAMES}",
+        f"Error X: {error_x}  Error Y: {error_y}",
+        f"PAN: {tracking.pan_correction:+.2f}  "
+        f"TILT: {tracking.tilt_correction:+.2f}",
+    )
+    for index, text in enumerate(details):
+        y = 70 + (index * 28)
+        cv2.putText(
+            frame,
+            text,
+            (10, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            2,
+        )
+
+
 def run_webcam(
     model_path: Path,
     camera_index: int,
@@ -172,7 +239,7 @@ def run_webcam(
     )
     print("Press Q in the camera window to close.")
 
-    consecutive_frames = 0
+    tracker = ProportionalFlameTracker()
     previous_time = time.perf_counter()
 
     try:
@@ -192,14 +259,27 @@ def run_webcam(
                 verbose=False,
             )[0]
             detection = strongest_flame(result)
-            consecutive_frames = consecutive_frames + 1 if detection["flame_detected"] else 0
-            detection["flame_confirmed"] = consecutive_frames >= CONFIRMATION_FRAMES
+            height, width = frame.shape[:2]
+            tracking = tracker.update(
+                detection["center_x"],
+                detection["center_y"],
+                width,
+                height,
+            )
+            detection["flame_confirmed"] = tracking.state in {
+                TrackingState.TRACKING,
+                TrackingState.CENTERED,
+            }
             latest_detection = detection
+            send_motor_command(
+                tracking.pan_correction,
+                tracking.tilt_correction,
+                simulation_mode=SIMULATION_MODE,
+            )
 
             now = time.perf_counter()
             fps = 1.0 / max(now - previous_time, 0.0001)
             previous_time = now
-            height, width = frame.shape[:2]
 
             for flame in detection["detections"]:
                 x1, y1, x2, y2 = flame["bounding_box"]
@@ -225,18 +305,25 @@ def run_webcam(
             if detection["flame_detected"] and not detection["flame_confirmed"]:
                 status = (
                     f"{detection['flame_count']} FLAME CANDIDATE(S) "
-                    f"{consecutive_frames}/{CONFIRMATION_FRAMES}"
+                    f"{tracking.confirmation_count}/{CONFIRMATION_FRAMES}"
                 )
 
             cv2.rectangle(frame, (0, 0), (width, 42), (0, 0, 0), -1)
             cv2.putText(frame, status, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 165, 255), 2)
             overlay = f"{width}x{height}  FPS: {fps:.1f}"
             cv2.putText(frame, overlay, (max(width - 245, 10), 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            draw_tracking_debug(
+                frame,
+                tracking,
+                detection["center_x"],
+                detection["center_y"],
+            )
 
             cv2.imshow(WINDOW_TITLE, frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
     finally:
+        safe_stop_motors()
         camera.release()
         cv2.destroyAllWindows()
 

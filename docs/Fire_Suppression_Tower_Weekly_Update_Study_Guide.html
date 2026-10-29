@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fire Suppression Tower - Weekly Update Study Guide</title>
+  <style>
+    @page { size: Letter; margin: 0.62in 0.65in 0.62in; }
+    :root {
+      --ink: #172033;
+      --muted: #526079;
+      --navy: #16263f;
+      --blue: #206c9e;
+      --cyan: #dff3f7;
+      --orange: #ef7d32;
+      --orange-soft: #fff0e6;
+      --green: #22735b;
+      --green-soft: #e8f5ef;
+      --red: #a33a35;
+      --red-soft: #faeceb;
+      --line: #d9e0e8;
+      --paper: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    html { font-size: 10.5pt; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 1.45;
+    }
+    h1, h2, h3 { color: var(--navy); line-height: 1.15; margin-top: 0; }
+    h1 { font-size: 29pt; letter-spacing: -0.7px; margin-bottom: 12px; }
+    h2 {
+      font-size: 18pt;
+      padding-bottom: 7px;
+      border-bottom: 2px solid var(--blue);
+      margin: 0 0 14px;
+    }
+    h3 { font-size: 12.5pt; margin: 17px 0 7px; }
+    p { margin: 6px 0 10px; }
+    ul, ol { margin: 7px 0 12px; padding-left: 22px; }
+    li { margin: 4px 0; }
+    strong { color: var(--navy); }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9.5pt;
+      background: #f2f5f8;
+      border-radius: 3px;
+      padding: 1px 4px;
+    }
+    pre {
+      background: var(--navy);
+      color: #eef6ff;
+      padding: 14px 16px;
+      border-radius: 7px;
+      line-height: 1.42;
+      white-space: pre-wrap;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9.4pt;
+      margin: 10px 0 14px;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 9px 0 16px; font-size: 9.7pt; }
+    th { background: var(--navy); color: white; text-align: left; padding: 8px; }
+    td { border: 1px solid var(--line); padding: 7px 8px; vertical-align: top; }
+    tr:nth-child(even) td { background: #f7f9fb; }
+    .cover {
+      min-height: 9.2in;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 0.2in 0.35in;
+      page-break-after: always;
+      position: relative;
+    }
+    .cover::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 1.1in;
+      bottom: 1.1in;
+      width: 9px;
+      background: linear-gradient(var(--orange), var(--blue));
+      border-radius: 6px;
+    }
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 2.2px;
+      color: var(--orange);
+      font-weight: 700;
+      font-size: 10pt;
+      margin-bottom: 18px;
+    }
+    .subtitle { font-size: 16pt; color: var(--muted); max-width: 6.8in; margin-bottom: 28px; }
+    .cover-meta { color: var(--muted); font-size: 10.5pt; }
+    .cover-box {
+      margin-top: 36px;
+      padding: 18px 20px;
+      border-left: 5px solid var(--orange);
+      background: var(--orange-soft);
+      max-width: 6.9in;
+      font-size: 11pt;
+    }
+    .section { page-break-before: always; }
+    .section.first { page-break-before: auto; }
+    .card {
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--blue);
+      padding: 12px 15px;
+      border-radius: 5px;
+      margin: 10px 0 14px;
+      background: #fbfcfe;
+      break-inside: avoid;
+    }
+    .card.orange { border-left-color: var(--orange); background: var(--orange-soft); }
+    .card.green { border-left-color: var(--green); background: var(--green-soft); }
+    .card.red { border-left-color: var(--red); background: var(--red-soft); }
+    .label {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 8.4pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: var(--cyan);
+      color: var(--blue);
+      margin-bottom: 6px;
+    }
+    .pipeline {
+      text-align: center;
+      border: 1px solid var(--line);
+      background: #f7fafc;
+      padding: 13px;
+      border-radius: 7px;
+      font-family: Consolas, "Courier New", monospace;
+      font-weight: 600;
+      line-height: 1.65;
+      margin: 12px 0 16px;
+      break-inside: avoid;
+    }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .qa { break-inside: avoid; margin-bottom: 13px; }
+    .question { font-weight: 700; color: var(--navy); margin-bottom: 3px; }
+    .answer { margin: 0; padding-left: 13px; border-left: 3px solid var(--cyan); }
+    .small { color: var(--muted); font-size: 9pt; }
+    .footer-note { color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; margin-top: 18px; font-size: 8.8pt; }
+    .no-break { break-inside: avoid; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <div class="eyebrow">Project presentation study guide</div>
+    <h1>Fire Suppression Tower</h1>
+    <div class="subtitle">Computer vision, flame localization, target tracking, training results, safety boundaries, and weekly updates</div>
+    <div class="cover-meta">Prepared from the repository state on October 23, 2026</div>
+    <div class="cover-box">
+      <strong>The central idea:</strong> the laptop detects and localizes a flame, then computes simulated aiming corrections. The ESP32, physical motors, safety interlocks, and pump are separate hardware responsibilities and are not yet integrated.
+    </div>
+  </section>
+
+  <section class="section first">
+    <h2>1. Presentation-ready overview</h2>
+    <div class="card green">
+      <div class="label">30-second summary</div>
+      <p>“The Fire Suppression Tower uses a camera and a dedicated one-class YOLO model to detect and localize flames. The software selects the strongest detected flame, verifies it across three consecutive frames, calculates its pixel error from the camera center, and converts that error into bounded pan-and-tilt corrections. Motor commands are currently simulated. ESP32 communication, physical motor control, IR confirmation, person lockout, and pump activation are not yet integrated.”</p>
+    </div>
+
+    <h3>The system pipeline</h3>
+    <div class="pipeline">Logitech camera<br>↓<br>OpenCV captures a frame<br>↓<br>YOLO produces flame boxes and confidence scores<br>↓<br>Select the strongest flame and calculate its center<br>↓<br>Require three consecutive detections<br>↓<br>Compare flame center with camera center<br>↓<br>Apply dead zone, proportional gain, and command limit<br>↓<br>Print a simulated PAN/TILT command<br>↓<br>Display detections, tracking state, error, and output</div>
+
+    <div class="two-col">
+      <div class="card">
+        <strong>Laptop responsibilities</strong>
+        <ul>
+          <li>Camera capture</li>
+          <li>Neural-network inference</li>
+          <li>Flame localization</li>
+          <li>Tracking calculations</li>
+          <li>Simulated commands</li>
+        </ul>
+      </div>
+      <div class="card orange">
+        <strong>ESP32 responsibilities</strong>
+        <ul>
+          <li>IR sensor input</li>
+          <li>Physical motor drivers</li>
+          <li>Mechanical limits</li>
+          <li>Pump output</li>
+          <li>Real-time safety behavior</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>2. Flame detection and localization</h2>
+    <h3>Object detection versus classification</h3>
+    <p>A classifier would only report that an image contains a flame. YOLO performs <strong>object detection</strong>, so it also returns where each flame appears.</p>
+    <table>
+      <thead><tr><th>Output</th><th>Meaning</th><th>How the project uses it</th></tr></thead>
+      <tbody>
+        <tr><td>Class</td><td>The type of object</td><td>The dedicated model has one class: <code>0 = flame</code>.</td></tr>
+        <tr><td>Confidence</td><td>Strength of the model's detection</td><td>Reject weak predictions and rank multiple flames.</td></tr>
+        <tr><td>Bounding box</td><td>Rectangle around an object</td><td>Draw the flame and calculate its center.</td></tr>
+        <tr><td>Center point</td><td>Midpoint of the bounding box</td><td>Target input for pan-and-tilt tracking.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Important thresholds</h3>
+    <div class="card">
+      <p><strong>Confidence threshold: 0.30.</strong> Predictions below 30% confidence are rejected. Lowering it can find weaker or more distant flames but can also increase false positives.</p>
+      <p><strong>IoU threshold: 0.35.</strong> Intersection over Union measures box overlap. During non-maximum suppression, it helps remove redundant boxes around the same flame.</p>
+    </div>
+    <p><strong>Confidence is not a perfectly calibrated real-world probability.</strong> It is most useful for filtering and ranking predictions.</p>
+
+    <h3>Multiple flames</h3>
+    <p>The detector retains and displays all flame detections, but the highest-confidence flame supplies the target coordinates. This is simple and deterministic, but the selected target could switch between flames from frame to frame.</p>
+
+    <h3>Why the model is one-class</h3>
+    <p>A specialized flame-only model narrows the problem and dataset. Person detection exists only as separate experimental code; it is not integrated into the dedicated detector and must not be presented as an active safety lockout.</p>
+  </section>
+
+  <section class="section">
+    <h2>3. Confirmation and tracking states</h2>
+    <p>A flame must appear in three consecutive frames before the tracker issues a nonzero correction. This reduces movement caused by a single noisy prediction, reflection, or bright object.</p>
+    <table>
+      <thead><tr><th>State</th><th>Meaning</th><th>Command behavior</th></tr></thead>
+      <tbody>
+        <tr><td><code>NO_TARGET</code></td><td>No valid flame or invalid frame dimensions</td><td>Pan and tilt are zero; confirmation resets.</td></tr>
+        <tr><td><code>CONFIRMING</code></td><td>Flame detected, but fewer than three consecutive frames</td><td>Pan and tilt remain zero.</td></tr>
+        <tr><td><code>TRACKING</code></td><td>Confirmed flame is outside the center dead zone</td><td>Bounded correction is produced.</td></tr>
+        <tr><td><code>CENTERED</code></td><td>Confirmed flame is inside both dead zones</td><td>Pan and tilt are zero.</td></tr>
+        <tr><td><code>DISABLED</code></td><td>Tracking is turned off in configuration</td><td>Pan and tilt are zero.</td></tr>
+      </tbody>
+    </table>
+    <div class="card orange">
+      <strong>Known limitation:</strong> confirmation checks that a flame exists in consecutive frames. It does not establish a persistent object identity or prove that every detection belongs to the same physical flame.
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>4. Controller math</h2>
+    <h3>Step 1: calculate image error</h3>
+    <pre>error_x = target_x - frame_width / 2
+error_y = target_y - frame_height / 2</pre>
+    <ul>
+      <li>Negative X means left; positive X means right.</li>
+      <li>Negative Y means above; positive Y means below.</li>
+      <li>Direction-inversion settings can reverse either physical axis later.</li>
+    </ul>
+
+    <h3>Step 2: proportional correction</h3>
+    <pre>pan correction  = Kp_pan  × error_x
+tilt correction = Kp_tilt × error_y</pre>
+    <p>The current proportional gains are <code>0.05</code> for both axes. This is a <strong>P controller</strong>, not a full PID controller. It has no integral term for accumulated error and no derivative term for damping.</p>
+
+    <h3>Step 3: dead zone and clamping</h3>
+    <ul>
+      <li>The dead zone is ±40 pixels on each axis.</li>
+      <li>Inside the dead zone, that axis receives a zero correction.</li>
+      <li>Each output is clamped to the range −25 through +25.</li>
+    </ul>
+    <p>The dead zone reduces jitter near the center. Clamping prevents a large image error from producing an unbounded request.</p>
+
+    <div class="card green">
+      <div class="label">Example to memorize</div>
+      <p>For a 1920×1080 frame, the center is <code>(960, 540)</code>. If the flame center is <code>(1200, 460)</code>, the error is <code>(+240, −80)</code>.</p>
+      <pre>Pan  = 0.05 × 240  = +12
+Tilt = 0.05 × -80  = -4
+
+Simulated message: PAN:12.00,TILT:-4.00</pre>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>5. Motor boundary and firmware status</h2>
+    <p>The laptop-side motor module formats a future newline-delimited serial message such as:</p>
+    <pre>PAN:12.50,TILT:-7.00</pre>
+    <p><code>SIMULATION_MODE</code> is currently <code>True</code>, so commands are printed rather than transmitted. If simulation is disabled, the program intentionally raises an error because actual serial output has not been implemented.</p>
+    <p>The detector attempts to issue <code>PAN:0.00,TILT:0.00</code> during shutdown or an exception. This is a best-effort software stop; it is not a substitute for a hardware emergency stop or communication watchdog.</p>
+
+    <div class="card red">
+      <strong>Firmware reality:</strong> the ESP32 currently initializes serial communication and prints a boot message. Its loop still contains TODOs for IR input, motor aiming, and pump control. The physical suppression system is not operational from this code.
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>6. Model training and data</h2>
+    <h3>Training process</h3>
+    <ul>
+      <li>The dedicated model starts from pretrained YOLO weights.</li>
+      <li>The dataset is normalized to exactly one class: flame.</li>
+      <li>Training requires CUDA device 0 and does not silently fall back to CPU.</li>
+      <li>Mixed precision is enabled to improve GPU speed and memory use.</li>
+      <li>Early stopping ends training after validation stops improving for the configured patience.</li>
+      <li>Ultralytics writes <code>best.pt</code> for the best validation checkpoint.</li>
+    </ul>
+
+    <h3>Hard negatives</h3>
+    <p>Hard negatives resemble flames but contain no actual fire. Examples include lamps, reflections, flashlights, red or orange objects, phone screens, and unlit candles. Empty YOLO label files teach the detector that these scenes should produce no flame box.</p>
+
+    <h3>Data-quality controls</h3>
+    <ul>
+      <li>Positive images can contain individually labeled multiple flames.</li>
+      <li>The collector reports overexposure and sharpness information.</li>
+      <li>Exposure and focus can be adjusted for small or distant flames.</li>
+      <li>Nearly identical frames should not be split across training, validation, and test sets because that would inflate reported performance.</li>
+    </ul>
+
+    <h3>CUDA and TensorRT</h3>
+    <p>The PyTorch checkpoint is stored as <code>.pt</code>. It can be exported to a TensorRT FP16 <code>.engine</code> for faster NVIDIA GPU inference and reduced memory use. The engine is tied to its TensorRT/GPU environment, and the current engine uses a fixed 640×640 input.</p>
+    <p>The camera can capture at a higher resolution, such as 1920×1080, while YOLO processes the image at the configured inference size. The resizable display window is independent of both.</p>
+  </section>
+
+  <section class="section">
+    <h2>7. Results and correct interpretation</h2>
+    <p>The recent <code>candle_hard_negatives_640</code> run reached its best strict validation score around epoch 12:</p>
+    <table>
+      <thead><tr><th>Metric</th><th>Value</th><th>Interpretation</th></tr></thead>
+      <tbody>
+        <tr><td>Precision</td><td>≈ 0.906</td><td>About 90.6% of predicted boxes were correct under that validation setup.</td></tr>
+        <tr><td>Recall</td><td>≈ 0.910</td><td>About 91.0% of labeled flames were detected.</td></tr>
+        <tr><td>mAP@0.50</td><td>≈ 0.944</td><td>Strong average precision with a moderate 50% box-overlap requirement.</td></tr>
+        <tr><td>mAP@0.50:0.95</td><td>≈ 0.490</td><td>Performance across increasingly strict localization requirements.</td></tr>
+      </tbody>
+    </table>
+    <div class="card orange">
+      <strong>Do not overclaim:</strong> runs should only be directly compared when they use the same held-out validation data and evaluation settings. The latest experimental run also produced <code>NaN</code> validation losses in its final row, which should be investigated before relying on it.
+    </div>
+    <p>The detector currently prefers <code>runs/candle_yolo/weights/best.engine</code>, then <code>best.pt</code>. New experimental checkpoints are not automatically promoted to the deployment default.</p>
+  </section>
+
+  <section class="section">
+    <h2>8. What changed this week</h2>
+    <h3>Committed on October 21</h3>
+    <ul>
+      <li>Added a resizable detector display window.</li>
+      <li>Separated display dimensions from camera capture and inference resolution.</li>
+      <li>Made early-stopping patience configurable in the training monitor.</li>
+      <li>Corrected the training monitor's epoch-count display.</li>
+    </ul>
+    <h3>Current in-progress working-tree changes</h3>
+    <ul>
+      <li>Added centralized tracking configuration.</li>
+      <li>Added the proportional flame-tracking controller.</li>
+      <li>Added a simulated motor-command interface.</li>
+      <li>Integrated tracking state and corrections into the live detector.</li>
+      <li>Added visual overlays for dead zone, target error, state, and controller output.</li>
+      <li>Added best-effort zero commands during shutdown.</li>
+      <li>Added unit tests for tracking math and message formatting.</li>
+    </ul>
+    <div class="card green">
+      <strong>Presentation wording:</strong> “The committed update improved the detector display and training monitor. Target tracking and simulated motor integration are the current in-progress work.”
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>9. Verification and limitations</h2>
+    <h3>Verified in the current repository</h3>
+    <ul>
+      <li>Six tracking/protocol unit tests pass.</li>
+      <li>The active detector, tracker, configuration, and motor-interface modules compile.</li>
+      <li>Tests cover direction signs, command clamping, dead zone, confirmation, lost-target reset, axis inversion, disabled mode, and message formatting.</li>
+    </ul>
+
+    <h3>Not proven by those tests</h3>
+    <ul>
+      <li>Live-camera detection accuracy</li>
+      <li>Physical motor direction or mechanical calibration</li>
+      <li>USB serial communication</li>
+      <li>IR confirmation</li>
+      <li>Person safety lockout</li>
+      <li>Pump behavior</li>
+      <li>End-to-end suppression safety</li>
+    </ul>
+
+    <h3>Current engineering limitations</h3>
+    <ul>
+      <li>Commands are abstract corrections, not calibrated motor angles or steps.</li>
+      <li>The strongest target can change in a multi-flame scene.</li>
+      <li>There is no persistent target identity or motion prediction.</li>
+      <li>The controller has not been tuned against real motor dynamics.</li>
+      <li>Camera exposure, reflections, and small distant flames can affect performance.</li>
+      <li>There is no hardware watchdog, limit-switch handling, or emergency stop in this software.</li>
+    </ul>
+  </section>
+
+  <section class="section">
+    <h2>10. Likely questions and concise answers</h2>
+    <div class="qa"><div class="question">Why use YOLO?</div><p class="answer">It provides real-time object locations, not only a yes-or-no classification, so the same output can support aiming.</p></div>
+    <div class="qa"><div class="question">Why use three-frame confirmation?</div><p class="answer">It reduces reactions to isolated false detections while adding only a small delay.</p></div>
+    <div class="qa"><div class="question">Why use a dead zone?</div><p class="answer">Bounding-box centers fluctuate slightly. The dead zone prevents constant motor hunting when the target is approximately centered.</p></div>
+    <div class="qa"><div class="question">Why use proportional control?</div><p class="answer">It produces small corrections for small errors and larger corrections for large errors. It is simple, interpretable, and suitable for initial tests.</p></div>
+    <div class="qa"><div class="question">Why clamp the command?</div><p class="answer">It establishes a maximum request and prevents an extreme pixel error from producing an extreme control output.</p></div>
+    <div class="qa"><div class="question">What happens if the target disappears?</div><p class="answer">The confirmation counter resets, the state becomes <code>NO_TARGET</code>, and both corrections return to zero.</p></div>
+    <div class="qa"><div class="question">What happens with multiple flames?</div><p class="answer">All are displayed, but the highest-confidence flame is used as the aiming target. Target switching is a known limitation.</p></div>
+    <div class="qa"><div class="question">Can it move the motors now?</div><p class="answer">No. It currently formats and prints simulated commands. ESP32 serial output is intentionally unimplemented.</p></div>
+    <div class="qa"><div class="question">Can it activate the pump?</div><p class="answer">No. Pump control is not implemented.</p></div>
+    <div class="qa"><div class="question">Does it guarantee nobody is sprayed?</div><p class="answer">No. Person detection and other safety interlocks are not integrated or validated. The system must remain in simulation.</p></div>
+    <div class="qa"><div class="question">Why require CUDA?</div><p class="answer">GPU inference and training are much faster, and refusing silent CPU fallback prevents the system from appearing functional while running with unacceptable latency.</p></div>
+    <div class="qa"><div class="question">Does a 90% confidence mean a 90% real-world probability?</div><p class="answer">Not necessarily. Detection confidence is useful for filtering and ranking, but it is not automatically a calibrated probability.</p></div>
+  </section>
+
+  <section class="section">
+    <h2>11. Recommended next steps</h2>
+    <ol>
+      <li>Create a fixed held-out test set and compare candidate models on identical data.</li>
+      <li>Investigate the <code>NaN</code> validation loss in the latest experiment.</li>
+      <li>Select and explicitly configure the intended deployment checkpoint.</li>
+      <li>Implement ESP32 serial messages with acknowledgments, sequence handling, and a timeout.</li>
+      <li>Calibrate pixel error to physical motor direction, speed, and angle.</li>
+      <li>Add limit switches, a hardware emergency stop, and a communication watchdog.</li>
+      <li>Integrate and validate person detection and IR confirmation.</li>
+      <li>Implement a safety state machine before connecting the pump.</li>
+      <li>Run controlled end-to-end tests with suppression output simulated.</li>
+      <li>Only then consider controlled physical pump testing.</li>
+    </ol>
+    <div class="card red">
+      <strong>Bottom line:</strong> this is currently a computer-vision and simulated-targeting prototype, not a deployable autonomous fire-suppression system.
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>12. Final review checklist</h2>
+    <p>Before presenting, make sure you can explain these without reading:</p>
+    <ul>
+      <li>The complete camera-to-command pipeline</li>
+      <li>Object detection versus classification</li>
+      <li>Confidence versus IoU</li>
+      <li>The purpose of three-frame confirmation</li>
+      <li>The proportional-control equation</li>
+      <li>The 1920×1080 numerical example</li>
+      <li>Why the dead zone and clamp exist</li>
+      <li>What simulation mode does</li>
+      <li>What is committed versus still in progress</li>
+      <li>What the six passing tests prove—and what they do not prove</li>
+      <li>The current safety limitations</li>
+      <li>The next integration steps</li>
+    </ul>
+    <div class="footer-note">Repository references: <code>computer-vision/fire-detection/detect_candle_flame.py</code>, <code>target_tracking.py</code>, <code>config.py</code>, <code>motor_interface.py</code>, <code>test_target_tracking.py</code>, and <code>firmware/src/main.cpp</code>.</div>
+  </section>
+</body>
+</html>
