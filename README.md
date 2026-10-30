@@ -3,6 +3,11 @@
 - `computer-vision/` — Fire detection and localization
 - `firmware/` — ESP32 firmware for the IR sensor, motors, and pump
 
+## AI Use Appendix
+
+See [AI_USE.md](AI_USE.md) for the course-required log of AI-assisted code,
+explanations, reviews, and debugging. Add a row whenever AI contributes.
+
 ## Branching Strategy
 
 We use feature branches so multiple team members can work simultaneously while keeping `main` stable.
