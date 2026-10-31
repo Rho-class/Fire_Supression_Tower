@@ -10,8 +10,8 @@ CONFIDENCE_THRESHOLD = 0.20
 # YOLO-World can search for objects using text descriptions.
 model = YOLOWorld("yolov8s-world.pt")
 
-# Classes that matter to the fire-suppression tower.
-model.set_classes(["fire", "flame", "person"])
+# Keep this simulator focused on flame detection only.
+model.set_classes(["fire", "flame"])
 
 camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 
@@ -44,7 +44,6 @@ while True:
     )[0]
 
     fire_detected = False
-    person_detected = False
     strongest_fire_confidence = 0.0
     fire_center = None
 
@@ -69,10 +68,6 @@ while True:
                 if confidence > strongest_fire_confidence:
                     strongest_fire_confidence = confidence
                     fire_center = (center_x, center_y)
-
-            elif class_name == "person":
-                person_detected = True
-                color = (0, 0, 255)
 
             else:
                 color = (255, 255, 255)
@@ -105,12 +100,7 @@ while True:
                 -1,
             )
 
-    # Person detection takes priority as a no-spray lockout.
-    if person_detected:
-        status = "PERSON DETECTED - NO SPRAY"
-        status_color = (0, 0, 255)
-
-    elif fire_detected:
+    if fire_detected:
         status = "FIRE CANDIDATE DETECTED"
         status_color = (0, 165, 255)
 
@@ -150,7 +140,6 @@ while True:
                 "detected": True,
                 "confidence": round(strongest_fire_confidence, 3),
                 "center_pixel": fire_center,
-                "person_lockout": person_detected,
             }
         )
 

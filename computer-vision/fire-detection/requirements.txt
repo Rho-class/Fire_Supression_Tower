@@ -17,3 +17,4 @@ onnxscript>=0.7.2
 lief>=1.0.0
 polygraphy>=0.53.6
 pyarrow>=26.0.0
+pyserial>=3.5,<4

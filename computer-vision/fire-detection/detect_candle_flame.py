@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 import cv2
+import serial
+from serial import SerialException
 
 from config import CONFIRMATION_FRAMES, DEADZONE_X, DEADZONE_Y, SIMULATION_MODE
 from motor_interface import send_motor_command
@@ -20,6 +22,64 @@ DEFAULT_ENGINE_MODEL = HERE / "runs" / "candle_yolo" / "weights" / "best.engine"
 CONFIDENCE_THRESHOLD = 0.30
 IOU_THRESHOLD = 0.35
 WINDOW_TITLE = "Fire Tower - Candle Flame Detector"
+MOTOR_BAUD = 115200
+MOTOR_MIN_SPEED = 50
+MOTOR_MAX_SPEED = 1500
+MOTOR_COMMAND_REFRESH_SECONDS = 0.10
+
+
+class SerialPanMotorLink:
+    """Drive the STEP/DIR pan motor over the ESP32 USB serial protocol."""
+
+    def __init__(self, port_name: str, speed: int) -> None:
+        if not MOTOR_MIN_SPEED <= speed <= MOTOR_MAX_SPEED:
+            raise ValueError(
+                f"Motor speed must be between {MOTOR_MIN_SPEED} and {MOTOR_MAX_SPEED} steps/s."
+            )
+        self.speed = speed
+        self.port = serial.Serial(
+            port_name, MOTOR_BAUD, timeout=0, write_timeout=0.3
+        )
+        self.current_command: str | None = None
+        self.last_sent = 0.0
+        try:
+            time.sleep(2.0)  # The ESP32 may reset when its serial port opens.
+            self.port.reset_input_buffer()
+            self.send("STOP", force=True)
+            print(f"Motor: {port_name}, STEP GPIO21, DIR GPIO22, {speed} steps/s")
+            print("Motor stays stopped until a flame is confirmed outside the crosshair deadband.")
+        except Exception:
+            self.port.close()
+            raise
+
+    def send(self, command: str, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if (
+            not force
+            and command == self.current_command
+            and now - self.last_sent < MOTOR_COMMAND_REFRESH_SECONDS
+        ):
+            return
+        try:
+            self.port.write((command + "\n").encode("ascii"))
+            if command != self.current_command:
+                print(f"Motor command: {command}", flush=True)
+            self.current_command = command
+            self.last_sent = now
+            if self.port.in_waiting:
+                self.port.read(self.port.in_waiting)
+        except (SerialException, OSError) as exc:
+            raise RuntimeError(f"ESP32 serial motor command failed: {exc}") from exc
+
+    def close(self) -> None:
+        try:
+            if self.port.is_open:
+                try:
+                    self.send("STOP", force=True)
+                finally:
+                    self.port.close()
+        except Exception as exc:
+            print(f"Motor stop warning: {exc}")
 
 
 class DetectedFlame(TypedDict):
@@ -191,6 +251,8 @@ def run_webcam(
     capture_fps: int,
     display_width: int,
     display_height: int,
+    motor_port: str | None = None,
+    motor_speed: int = MOTOR_MAX_SPEED,
 ) -> FlameDetection:
     """Run until Q is pressed and return the most recent flame result."""
     global latest_detection
@@ -241,8 +303,15 @@ def run_webcam(
 
     tracker = ProportionalFlameTracker()
     previous_time = time.perf_counter()
+    motor_link: SerialPanMotorLink | None = None
+    active_motor_direction: str | None = None
+    pending_motor_direction: str | None = None
+    pending_direction_frames = 0
+    direction_lock_frames = 3
 
     try:
+        if motor_port is not None:
+            motor_link = SerialPanMotorLink(motor_port, motor_speed)
         while True:
             success, frame = camera.read()
             if not success:
@@ -271,11 +340,49 @@ def run_webcam(
                 TrackingState.CENTERED,
             }
             latest_detection = detection
-            send_motor_command(
-                tracking.pan_correction,
-                tracking.tilt_correction,
-                simulation_mode=SIMULATION_MODE,
-            )
+            motor_status = "STOP" if motor_link is not None else "SIMULATION"
+            if motor_link is None:
+                send_motor_command(
+                    tracking.pan_correction,
+                    tracking.tilt_correction,
+                    simulation_mode=SIMULATION_MODE,
+                )
+            else:
+                desired_direction = None
+                if detection["flame_confirmed"] and tracking.pan_correction > 0:
+                    desired_direction = "R"
+                elif detection["flame_confirmed"] and tracking.pan_correction < 0:
+                    desired_direction = "L"
+
+                motor_command = "STOP"
+                if desired_direction is None:
+                    active_motor_direction = None
+                    pending_motor_direction = None
+                    pending_direction_frames = 0
+                elif desired_direction == active_motor_direction:
+                    pending_motor_direction = None
+                    pending_direction_frames = 0
+                    motor_command = f"JOG {desired_direction} {motor_speed}"
+                    motor_status = "RIGHT" if desired_direction == "R" else "LEFT"
+                else:
+                    if desired_direction == pending_motor_direction:
+                        pending_direction_frames += 1
+                    else:
+                        pending_motor_direction = desired_direction
+                        pending_direction_frames = 1
+                    active_motor_direction = None
+                    if pending_direction_frames >= direction_lock_frames:
+                        active_motor_direction = desired_direction
+                        pending_motor_direction = None
+                        pending_direction_frames = 0
+                        motor_command = f"JOG {desired_direction} {motor_speed}"
+                        motor_status = "RIGHT" if desired_direction == "R" else "LEFT"
+                    else:
+                        motor_status = (
+                            f"WAIT {'RIGHT' if desired_direction == 'R' else 'LEFT'} "
+                            f"{pending_direction_frames}/{direction_lock_frames}"
+                        )
+                motor_link.send(motor_command)
 
             now = time.perf_counter()
             fps = 1.0 / max(now - previous_time, 0.0001)
@@ -307,6 +414,8 @@ def run_webcam(
                     f"{detection['flame_count']} FLAME CANDIDATE(S) "
                     f"{tracking.confirmation_count}/{CONFIRMATION_FRAMES}"
                 )
+            if motor_link is not None:
+                status += f" | MOTOR {motor_status}"
 
             cv2.rectangle(frame, (0, 0), (width, 42), (0, 0, 0), -1)
             cv2.putText(frame, status, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 165, 255), 2)
@@ -323,7 +432,10 @@ def run_webcam(
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
     finally:
-        safe_stop_motors()
+        if motor_link is not None:
+            motor_link.close()
+        else:
+            safe_stop_motors()
         camera.release()
         cv2.destroyAllWindows()
 
@@ -342,7 +454,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--display-width", type=int, default=1280)
     parser.add_argument("--display-height", type=int, default=720)
-    return parser.parse_args()
+    parser.add_argument(
+        "--motor", action="store_true",
+        help="Enable physical pan-motor control over the ESP32 serial link.",
+    )
+    parser.add_argument("--motor-port", default="COM3")
+    parser.add_argument("--motor-speed", type=int, default=MOTOR_MAX_SPEED)
+    args = parser.parse_args()
+    if not MOTOR_MIN_SPEED <= args.motor_speed <= MOTOR_MAX_SPEED:
+        parser.error(
+            f"--motor-speed must be between {MOTOR_MIN_SPEED} and {MOTOR_MAX_SPEED} steps/s."
+        )
+    return args
 
 
 def main() -> None:
@@ -358,6 +481,8 @@ def main() -> None:
         args.fps,
         args.display_width,
         args.display_height,
+        motor_port=args.motor_port if args.motor else None,
+        motor_speed=args.motor_speed,
     )
 
 
