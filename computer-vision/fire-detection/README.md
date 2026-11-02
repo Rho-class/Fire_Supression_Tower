@@ -124,7 +124,11 @@ future pan/tilt code.
 
 `flame_confirmed` becomes true only after flame detections in three consecutive
 frames. `latest_detection` exposes the most recent result for later pan/tilt
-localization. This test never sends commands to the pump or ESP32.
+localization. The physical test can be enabled with `--motor --motor-port COM3`.
+It uses motor 2 (GPIO 18/19) for left/right pan and motor 1 (GPIO 21/22) for
+up/down tilt. Both axes move only after a confirmed flame and have independent
+three-frame direction locks. Flame right/left moves pan; flame below/above moves
+tilt down/up. This test never sends commands to the pump.
 
 ## Collect targeted improvement data
 

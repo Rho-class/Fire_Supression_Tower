@@ -1,11 +1,10 @@
-﻿#include <Arduino.h>
+#include <Arduino.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
 namespace {
-constexpr uint8_t kStepPin = 21;
-constexpr uint8_t kDirectionPin = 22;
+constexpr uint8_t kMotorCount = 2;
 constexpr uint16_t kMinimumStepsPerSecond = 50;
 constexpr uint16_t kMaximumStepsPerSecond = 1500;
 constexpr uint32_t kCommandTimeoutMs = 400;
@@ -13,23 +12,61 @@ constexpr uint32_t kStepPulseHighUs = 3;
 constexpr uint8_t kLeftDirectionLevel = LOW;
 constexpr uint8_t kRightDirectionLevel = HIGH;
 
+struct MotorState {
+  uint8_t stepPin;
+  uint8_t directionPin;
+  bool moving;
+  bool movingLeft;
+  uint16_t stepsPerSecond;
+  uint32_t stepIntervalUs;
+  uint32_t nextStepUs;
+  uint32_t lastCommandMs;
+};
+
+MotorState motors[kMotorCount] = {
+    {21, 22, false, false, 100, 10000, 0, 0},
+    {18, 19, false, false, 100, 10000, 0, 0},
+};
+uint8_t legacyMotorIndex = 0;
 char commandBuffer[40] = {};
 size_t commandLength = 0;
 bool discardCommand = false;
-bool moving = false;
-bool movingLeft = false;
-uint16_t stepsPerSecond = 100;
-uint32_t stepIntervalUs = 1000000UL / stepsPerSecond;
-uint32_t nextStepUs = 0;
-uint32_t lastCommandMs = 0;
 
-void stopMotor(bool report) {
-  const bool wasMoving = moving;
-  moving = false;
-  digitalWrite(kStepPin, LOW);
+void stopMotor(MotorState& motor, bool report) {
+  const bool wasMoving = motor.moving;
+  motor.moving = false;
+  digitalWrite(motor.stepPin, LOW);
   if (report && wasMoving) {
     Serial.println("OK STOP");
   }
+}
+
+void stopAllMotors() {
+  for (MotorState& motor : motors) {
+    stopMotor(motor, false);
+  }
+  Serial.println("OK STOP");
+}
+
+void jogMotor(MotorState& motor, char requestedDirection, unsigned long requestedSpeed) {
+  requestedSpeed = constrain(requestedSpeed, kMinimumStepsPerSecond, kMaximumStepsPerSecond);
+  const bool newMovingLeft = requestedDirection == 'L';
+  const uint16_t newSpeed = static_cast<uint16_t>(requestedSpeed);
+  const uint8_t directionLevel = newMovingLeft ? kLeftDirectionLevel : kRightDirectionLevel;
+  const bool changed = !motor.moving || motor.movingLeft != newMovingLeft || motor.stepsPerSecond != newSpeed;
+
+  digitalWrite(motor.directionPin, directionLevel);
+  if (changed) {
+    motor.movingLeft = newMovingLeft;
+    motor.stepsPerSecond = newSpeed;
+    motor.stepIntervalUs = 1000000UL / motor.stepsPerSecond;
+    motor.nextStepUs = micros() + motor.stepIntervalUs;
+    Serial.print("OK JOG ");
+    Serial.print(newMovingLeft ? "LEFT " : "RIGHT ");
+    Serial.println(motor.stepsPerSecond);
+  }
+  motor.moving = true;
+  motor.lastCommandMs = millis();
 }
 
 void processCommand() {
@@ -39,38 +76,60 @@ void processCommand() {
   }
 
   if (strcmp(commandBuffer, "STOP") == 0) {
-    stopMotor(true);
+    stopAllMotors();
+    return;
+  }
+
+  unsigned int motorNumber = 0;
+  if (sscanf(commandBuffer, "STOP %u", &motorNumber) == 1) {
+    if (motorNumber < 1 || motorNumber > kMotorCount) {
+      Serial.println("ERROR: MOTOR MUST BE 1 OR 2");
+      return;
+    }
+    stopMotor(motors[motorNumber - 1], true);
+    return;
+  }
+
+  unsigned int requestedStepPin = 0;
+  unsigned int requestedDirectionPin = 0;
+  if (sscanf(commandBuffer, "PINS %u %u", &requestedStepPin, &requestedDirectionPin) == 2) {
+    if (requestedStepPin == 21 && requestedDirectionPin == 22) {
+      legacyMotorIndex = 0;
+    } else if (requestedStepPin == 18 && requestedDirectionPin == 19) {
+      legacyMotorIndex = 1;
+    } else {
+      Serial.println("ERROR: PINS MUST BE 21 22 OR 18 19");
+      return;
+    }
+    stopMotor(motors[legacyMotorIndex], false);
+    Serial.print("OK PINS STEP=GPIO");
+    Serial.print(motors[legacyMotorIndex].stepPin);
+    Serial.print(" DIR=GPIO");
+    Serial.println(motors[legacyMotorIndex].directionPin);
     return;
   }
 
   char requestedDirection = 0;
   unsigned long requestedSpeed = 0;
-  if (sscanf(commandBuffer, "JOG %c %lu", &requestedDirection, &requestedSpeed) != 2 ||
-      (requestedDirection != 'L' && requestedDirection != 'R')) {
-    if (commandLength > 0) {
-      Serial.println("ERROR: USE JOG L|R <steps_per_second> OR STOP");
+  if (sscanf(commandBuffer, "JOG %u %c %lu", &motorNumber, &requestedDirection, &requestedSpeed) == 3) {
+    if (motorNumber < 1 || motorNumber > kMotorCount ||
+        (requestedDirection != 'L' && requestedDirection != 'R')) {
+      Serial.println("ERROR: USE JOG 1|2 L|R <steps_per_second>");
+      return;
     }
+    jogMotor(motors[motorNumber - 1], requestedDirection, requestedSpeed);
     return;
   }
 
-  requestedSpeed = constrain(requestedSpeed, kMinimumStepsPerSecond, kMaximumStepsPerSecond);
-  const bool newMovingLeft = requestedDirection == 'L';
-  const uint16_t newSpeed = static_cast<uint16_t>(requestedSpeed);
-  const uint8_t directionLevel = newMovingLeft ? kLeftDirectionLevel : kRightDirectionLevel;
-  const bool changed = !moving || movingLeft != newMovingLeft || stepsPerSecond != newSpeed;
-
-  digitalWrite(kDirectionPin, directionLevel);
-  if (changed) {
-    movingLeft = newMovingLeft;
-    stepsPerSecond = newSpeed;
-    stepIntervalUs = 1000000UL / stepsPerSecond;
-    nextStepUs = micros() + stepIntervalUs;
-    Serial.print("OK JOG ");
-    Serial.print(newMovingLeft ? "LEFT " : "RIGHT ");
-    Serial.println(stepsPerSecond);
+  if (sscanf(commandBuffer, "JOG %c %lu", &requestedDirection, &requestedSpeed) == 2 &&
+      (requestedDirection == 'L' || requestedDirection == 'R')) {
+    jogMotor(motors[legacyMotorIndex], requestedDirection, requestedSpeed);
+    return;
   }
-  moving = true;
-  lastCommandMs = millis();
+
+  if (commandLength > 0) {
+    Serial.println("ERROR: USE JOG 1|2 L|R <speed>, JOG L|R <speed>, OR STOP");
+  }
 }
 
 void readSerialCommands() {
@@ -100,48 +159,51 @@ void readSerialCommands() {
   }
 }
 
-void generateStepPulse() {
+void generateStepPulse(MotorState& motor) {
   const uint32_t now = micros();
-  if (static_cast<int32_t>(now - nextStepUs) < 0) {
+  if (static_cast<int32_t>(now - motor.nextStepUs) < 0) {
     return;
   }
 
-  digitalWrite(kStepPin, HIGH);
+  digitalWrite(motor.stepPin, HIGH);
   delayMicroseconds(kStepPulseHighUs);
-  digitalWrite(kStepPin, LOW);
+  digitalWrite(motor.stepPin, LOW);
 
-  nextStepUs += stepIntervalUs;
-  if (static_cast<int32_t>(now - nextStepUs) >= 0) {
-    nextStepUs = now + stepIntervalUs;
+  motor.nextStepUs += motor.stepIntervalUs;
+  if (static_cast<int32_t>(now - motor.nextStepUs) >= 0) {
+    motor.nextStepUs = now + motor.stepIntervalUs;
   }
 }
 }  // namespace
 
 void setup() {
-  pinMode(kStepPin, OUTPUT);
-  pinMode(kDirectionPin, OUTPUT);
-  digitalWrite(kStepPin, LOW);
-  digitalWrite(kDirectionPin, kLeftDirectionLevel);
+  for (MotorState& motor : motors) {
+    pinMode(motor.stepPin, OUTPUT);
+    pinMode(motor.directionPin, OUTPUT);
+    digitalWrite(motor.stepPin, LOW);
+    digitalWrite(motor.directionPin, kLeftDirectionLevel);
+  }
 
   Serial.begin(115200);
   delay(300);
   Serial.println();
-  Serial.println("FIRE TOWER TMC2209 STEP/DIR READY");
-  Serial.println("STEP=GPIO21 DIR=GPIO22; SPEED=50..1500 steps/s");
-  Serial.println("Commands: JOG L|R <steps_per_second>, STOP");
-  Serial.println("Motor remains stopped until a JOG command arrives.");
+  Serial.println("FIRE TOWER DUAL TMC2209 STEP/DIR READY");
+  Serial.println("MOTOR1 STEP=GPIO21 DIR=GPIO22; MOTOR2 STEP=GPIO18 DIR=GPIO19");
+  Serial.println("Commands: JOG 1|2 L|R <steps_per_second>, STOP 1|2, STOP");
+  Serial.println("Legacy PINS and JOG commands are supported; motors start stopped.");
 }
 
 void loop() {
   readSerialCommands();
 
-  if (moving && millis() - lastCommandMs > kCommandTimeoutMs) {
-    stopMotor(true);
-    Serial.println("WATCHDOG STOP");
-  }
-
-  if (moving) {
-    generateStepPulse();
+  const uint32_t nowMs = millis();
+  for (MotorState& motor : motors) {
+    if (motor.moving && nowMs - motor.lastCommandMs > kCommandTimeoutMs) {
+      stopMotor(motor, true);
+      Serial.println("WATCHDOG STOP");
+    }
+    if (motor.moving) {
+      generateStepPulse(motor);
+    }
   }
 }
-

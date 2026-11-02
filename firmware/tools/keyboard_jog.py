@@ -37,7 +37,7 @@ def main() -> None:
     # Opening the serial port may reset an ESP32; allow it to boot before sending STOP.
     time.sleep(2.0)
     port.reset_input_buffer()
-    port.write(b"STOP\n")
+    port.write(b"STOP\nPINS 21 22\n")
 
     root = tk.Tk()
     root.title("Fire Tower - TMC2209 Motor Jog")

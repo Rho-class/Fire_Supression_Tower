@@ -28,8 +28,8 @@ MOTOR_MAX_SPEED = 1500
 MOTOR_COMMAND_REFRESH_SECONDS = 0.10
 
 
-class SerialPanMotorLink:
-    """Drive the STEP/DIR pan motor over the ESP32 USB serial protocol."""
+class SerialPanTiltMotorLink:
+    """Drive the pan and tilt STEP/DIR motors over the ESP32 USB serial protocol."""
 
     def __init__(self, port_name: str, speed: int) -> None:
         if not MOTOR_MIN_SPEED <= speed <= MOTOR_MAX_SPEED:
@@ -40,32 +40,38 @@ class SerialPanMotorLink:
         self.port = serial.Serial(
             port_name, MOTOR_BAUD, timeout=0, write_timeout=0.3
         )
-        self.current_command: str | None = None
-        self.last_sent = 0.0
+        self.current_commands = {1: "STOP 1", 2: "STOP 2"}
+        self.last_sent = {1: 0.0, 2: 0.0}
         try:
             time.sleep(2.0)  # The ESP32 may reset when its serial port opens.
             self.port.reset_input_buffer()
-            self.send("STOP", force=True)
-            print(f"Motor: {port_name}, STEP GPIO21, DIR GPIO22, {speed} steps/s")
-            print("Motor stays stopped until a flame is confirmed outside the crosshair deadband.")
+            self.port.write(b"STOP\n")
+            print(f"Motors: {port_name}, PAN motor 2 GPIO18/19; TILT motor 1 GPIO21/22")
+            print(f"Both axes use {speed} steps/s and stay stopped until a flame is confirmed.")
+            print("Flame right/left moves PAN; flame below/above moves TILT down/up.")
         except Exception:
             self.port.close()
             raise
 
-    def send(self, command: str, *, force: bool = False) -> None:
+    def send_axis(self, motor_number: int, direction: str | None, *, force: bool = False) -> None:
+        command = (
+            f"STOP {motor_number}"
+            if direction is None
+            else f"JOG {motor_number} {direction} {self.speed}"
+        )
         now = time.monotonic()
         if (
             not force
-            and command == self.current_command
-            and now - self.last_sent < MOTOR_COMMAND_REFRESH_SECONDS
+            and command == self.current_commands[motor_number]
+            and now - self.last_sent[motor_number] < MOTOR_COMMAND_REFRESH_SECONDS
         ):
             return
         try:
             self.port.write((command + "\n").encode("ascii"))
-            if command != self.current_command:
+            if command != self.current_commands[motor_number]:
                 print(f"Motor command: {command}", flush=True)
-            self.current_command = command
-            self.last_sent = now
+            self.current_commands[motor_number] = command
+            self.last_sent[motor_number] = now
             if self.port.in_waiting:
                 self.port.read(self.port.in_waiting)
         except (SerialException, OSError) as exc:
@@ -75,11 +81,31 @@ class SerialPanMotorLink:
         try:
             if self.port.is_open:
                 try:
-                    self.send("STOP", force=True)
+                    self.port.write(b"STOP\n")
                 finally:
                     self.port.close()
         except Exception as exc:
             print(f"Motor stop warning: {exc}")
+
+
+def apply_direction_lock(
+    axis_state: dict[str, Any], desired_direction: str | None, lock_frames: int
+) -> str | None:
+    """Require a stable direction before moving one axis; None means stop."""
+    if desired_direction is None:
+        axis_state.update(active=None, pending=None, frames=0)
+        return None
+    if desired_direction == axis_state["active"]:
+        axis_state.update(pending=None, frames=0)
+        return desired_direction
+    if desired_direction == axis_state["pending"]:
+        axis_state["frames"] += 1
+    else:
+        axis_state.update(active=None, pending=desired_direction, frames=1)
+    if axis_state["frames"] >= lock_frames:
+        axis_state.update(active=desired_direction, pending=None, frames=0)
+        return desired_direction
+    return None
 
 
 class DetectedFlame(TypedDict):
@@ -303,15 +329,14 @@ def run_webcam(
 
     tracker = ProportionalFlameTracker()
     previous_time = time.perf_counter()
-    motor_link: SerialPanMotorLink | None = None
-    active_motor_direction: str | None = None
-    pending_motor_direction: str | None = None
-    pending_direction_frames = 0
+    motor_link: SerialPanTiltMotorLink | None = None
     direction_lock_frames = 3
+    pan_lock: dict[str, Any] = {"active": None, "pending": None, "frames": 0}
+    tilt_lock: dict[str, Any] = {"active": None, "pending": None, "frames": 0}
 
     try:
         if motor_port is not None:
-            motor_link = SerialPanMotorLink(motor_port, motor_speed)
+            motor_link = SerialPanTiltMotorLink(motor_port, motor_speed)
         while True:
             success, frame = camera.read()
             if not success:
@@ -348,41 +373,37 @@ def run_webcam(
                     simulation_mode=SIMULATION_MODE,
                 )
             else:
-                desired_direction = None
-                if detection["flame_confirmed"] and tracking.pan_correction > 0:
-                    desired_direction = "R"
-                elif detection["flame_confirmed"] and tracking.pan_correction < 0:
-                    desired_direction = "L"
+                desired_pan = None
+                desired_tilt = None
+                if detection["flame_confirmed"]:
+                    if tracking.pan_correction > 0:
+                        desired_pan = "R"
+                    elif tracking.pan_correction < 0:
+                        desired_pan = "L"
+                    if tracking.tilt_correction > 0:
+                        desired_tilt = "R"
+                    elif tracking.tilt_correction < 0:
+                        desired_tilt = "L"
 
-                motor_command = "STOP"
-                if desired_direction is None:
-                    active_motor_direction = None
-                    pending_motor_direction = None
-                    pending_direction_frames = 0
-                elif desired_direction == active_motor_direction:
-                    pending_motor_direction = None
-                    pending_direction_frames = 0
-                    motor_command = f"JOG {desired_direction} {motor_speed}"
-                    motor_status = "RIGHT" if desired_direction == "R" else "LEFT"
-                else:
-                    if desired_direction == pending_motor_direction:
-                        pending_direction_frames += 1
-                    else:
-                        pending_motor_direction = desired_direction
-                        pending_direction_frames = 1
-                    active_motor_direction = None
-                    if pending_direction_frames >= direction_lock_frames:
-                        active_motor_direction = desired_direction
-                        pending_motor_direction = None
-                        pending_direction_frames = 0
-                        motor_command = f"JOG {desired_direction} {motor_speed}"
-                        motor_status = "RIGHT" if desired_direction == "R" else "LEFT"
-                    else:
-                        motor_status = (
-                            f"WAIT {'RIGHT' if desired_direction == 'R' else 'LEFT'} "
-                            f"{pending_direction_frames}/{direction_lock_frames}"
-                        )
-                motor_link.send(motor_command)
+                pan_direction = apply_direction_lock(
+                    pan_lock, desired_pan, direction_lock_frames
+                )
+                tilt_direction = apply_direction_lock(
+                    tilt_lock, desired_tilt, direction_lock_frames
+                )
+                motor_link.send_axis(2, pan_direction)
+                motor_link.send_axis(1, tilt_direction)
+                pan_label = (
+                    "PAN STOP" if pan_direction is None
+                    else "PAN RIGHT" if pan_direction == "R"
+                    else "PAN LEFT"
+                )
+                tilt_label = (
+                    "TILT STOP" if tilt_direction is None
+                    else "TILT DOWN" if tilt_direction == "R"
+                    else "TILT UP"
+                )
+                motor_status = f"{pan_label} | {tilt_label}"
 
             now = time.perf_counter()
             fps = 1.0 / max(now - previous_time, 0.0001)
