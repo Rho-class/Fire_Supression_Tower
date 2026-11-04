@@ -192,6 +192,48 @@ This exports `best.pt` for CUDA device 0 at image size 640 and batch size 1.
 Current Ultralytics uses `quantize=16` for FP16 TensorRT export. The generated
 `best.engine` is GPU/TensorRT-environment-specific and is ignored by Git.
 
+## Model evaluation
+
+Use `evaluate_flame_model.py` to measure image-level candle recall and lamp
+rejection across several confidence thresholds. Positive images must have at
+least one class-0 YOLO box; lamp and other no-flame images must have matching
+empty label files. Keep complete recording sessions in only one split so that
+nearly identical frames cannot leak between training and evaluation.
+
+Evaluate the held-out test split:
+
+```powershell
+python evaluate_flame_model.py images `
+  --data datasets\candle-kaggle-hard-negatives.yaml `
+  --split test `
+  --model runs\candle_yolo\weights\best.pt `
+  --thresholds 0.10,0.20,0.30,0.40,0.50,0.60,0.70,0.80,0.90
+```
+
+The evaluator writes individual image scores, threshold metrics, and a JSON
+report under `runs/evaluation/`. Select a threshold using both flame recall and
+false-positive rate. A displayed confidence of 0.80 is not itself evidence of
+80% detection reliability. Evaluation uses batch size 1 so the YOLO26x model
+fits the project's 8 GB GPU. The default acceptance target is at least 80%
+recall and at most a 5% image-level false-positive rate. Override it with
+`--min-recall` and `--max-fpr`, or add `--fail-on-target` for an automated test
+that exits unsuccessfully when no tested threshold passes.
+
+Record long videos with no flame visible while showing ceiling lights, lamps,
+reflections, screens, and windows. Measure false confirmation events per hour:
+
+```powershell
+python evaluate_flame_model.py video `
+  --input evaluation-videos\lamp-room-1.mp4 evaluation-videos\lamp-room-2.mp4 `
+  --model runs\candle_yolo\weights\best.pt `
+  --confirmation-frames 3
+```
+
+For a useful first acceptance target, require at least 80% recall on held-out
+candle images and zero false confirmation events in the available no-flame
+video. Continue recording longer and more varied video before treating the
+result as a safety claim.
+
 ## Safety
 
 Use simulated targets for development. Pump control must remain off. Person
