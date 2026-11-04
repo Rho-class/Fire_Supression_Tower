@@ -158,6 +158,7 @@ def train(
         imgsz=imgsz,
         batch=batch,
         device=0,
+        workers=0,
         amp=True,
         pretrained=True,
         project=str(RUNS_DIR),
