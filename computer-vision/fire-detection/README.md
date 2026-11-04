@@ -180,6 +180,47 @@ multi-flame images:
 python train_candle_yolo_cuda.py --batch 1 --imgsz 960 --epochs 150 --patience 30 --name candle_yolo_960
 ```
 
+## Mine hard negatives from no-flame video
+
+Record several videos containing lamps, ceiling lights, windows, reflections,
+screens, and other distractors. Each complete video is one session. Verify the
+videos contain no real flame, then run the current model at a low threshold to
+capture the frames it falsely classifies:
+
+```powershell
+python mine_hard_negatives.py `
+  --input evaluation-videos\lamp-morning.mp4 evaluation-videos\lamp-night.mp4 `
+  --model runs\candle_yolo\weights\best.pt `
+  --conf 0.10 --sample-fps 2 --minimum-seconds 2 `
+  --confirm-no-flame
+```
+
+The miner:
+
+- saves full false-positive frames with matching empty YOLO label files;
+- saves annotated review copies outside the training image folders;
+- filters near-identical frames with a perceptual hash;
+- assigns each entire video session to only one split; and
+- generates `datasets/candle-kaggle-hard-negatives-mined.yaml`, which combines
+  the existing flame data and hard negatives with the newly mined samples.
+
+Inspect every image under `datasets/hard-negative-mined-v1/review/`. Delete a
+training image, its matching empty label, its review copy, and its manifest row
+if any real flame is visible. Never train on an incorrectly empty label.
+
+After review, fine-tune from the current checkpoint:
+
+```powershell
+python train_candle_yolo_cuda.py `
+  --data datasets\candle-kaggle-hard-negatives-mined.yaml `
+  --model runs\candle_yolo\weights\best.pt `
+  --batch 1 --imgsz 640 --epochs 80 --patience 20 `
+  --augmentation robust --name candle_hard_negative_v2
+```
+
+Re-run `evaluate_flame_model.py` on the untouched test split after training.
+Do not move mined training sessions into the test split after viewing results.
+
 ## TensorRT FP16 export
 
 After training:
