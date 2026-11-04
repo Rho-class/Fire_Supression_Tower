@@ -1,0 +1,19 @@
+--extra-index-url https://download.pytorch.org/whl/cu130
+
+opencv-python==4.14.0.94
+numpy
+PyYAML
+torch==2.14.1
+torchvision==0.29.1
+ultralytics==8.4.177
+tensorrt==11.4.0.106
+onnx>=1.23.2,<2.0.0
+onnxruntime-gpu>=1.31.0
+onnxslim>=0.1.98
+nvidia-modelopt>=0.47.0
+onnx-graphsurgeon>=0.6.1
+onnxconverter-common>=1.16.0
+onnxscript>=0.7.2
+lief>=1.0.0
+polygraphy>=0.53.6
+pyarrow>=26.0.0

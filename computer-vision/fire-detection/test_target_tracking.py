@@ -1,0 +1,59 @@
+"""Unit tests for tracking math and the simulation serial protocol."""
+
+import unittest
+
+from motor_interface import format_motor_command
+from target_tracking import ProportionalFlameTracker, TrackingState
+
+
+class TrackingTests(unittest.TestCase):
+    def tracker(self, **overrides) -> ProportionalFlameTracker:
+        settings = {
+            "deadzone_x": 10,
+            "deadzone_y": 10,
+            "kp_pan": 1,
+            "kp_tilt": 1,
+            "max_pan_command": 20,
+            "max_tilt_command": 20,
+            "confirmation_frames": 1,
+        }
+        settings.update(overrides)
+        return ProportionalFlameTracker(**settings)
+
+    def test_left_right_up_down_signs_and_clamping(self) -> None:
+        self.assertEqual(self.tracker().update(20, 50, 100, 100).pan_correction, -20)
+        self.assertEqual(self.tracker().update(80, 50, 100, 100).pan_correction, 20)
+        self.assertEqual(self.tracker().update(50, 20, 100, 100).tilt_correction, -20)
+        self.assertEqual(self.tracker().update(50, 80, 100, 100).tilt_correction, 20)
+
+    def test_deadband_returns_centered(self) -> None:
+        result = self.tracker().update(55, 45, 100, 100)
+        self.assertEqual(result.state, TrackingState.CENTERED)
+        self.assertEqual((result.pan_correction, result.tilt_correction), (0.0, 0.0))
+
+    def test_confirmation_and_lost_target_reset(self) -> None:
+        tracker = self.tracker(confirmation_frames=3)
+        self.assertEqual(tracker.update(80, 50, 100, 100).state, TrackingState.CONFIRMING)
+        self.assertEqual(tracker.update(80, 50, 100, 100).state, TrackingState.CONFIRMING)
+        self.assertEqual(tracker.update(80, 50, 100, 100).state, TrackingState.TRACKING)
+        lost = tracker.update(None, None, 100, 100)
+        self.assertEqual(lost.state, TrackingState.NO_TARGET)
+        self.assertEqual((lost.pan_correction, lost.tilt_correction), (0.0, 0.0))
+        self.assertEqual(tracker.update(80, 50, 100, 100).confirmation_count, 1)
+
+    def test_axis_inversion(self) -> None:
+        result = self.tracker(pan_invert=True, tilt_invert=True).update(80, 80, 100, 100)
+        self.assertEqual((result.pan_correction, result.tilt_correction), (-20, -20))
+
+    def test_disabled_is_always_stopped(self) -> None:
+        result = self.tracker(enabled=False).update(80, 80, 100, 100)
+        self.assertEqual(result.state, TrackingState.DISABLED)
+        self.assertEqual((result.pan_correction, result.tilt_correction), (0.0, 0.0))
+
+    def test_serial_message_format(self) -> None:
+        self.assertEqual(format_motor_command(12.5, -7), "PAN:12.50,TILT:-7.00")
+
+
+if __name__ == "__main__":
+    unittest.main()
+

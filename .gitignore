@@ -1,0 +1,25 @@
+# Python environments, caches, and local configuration
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+
+# Generated datasets, training/inference runs, and model exports
+runs/
+!computer-vision/fire-detection/runs/
+computer-vision/fire-detection/runs/*
+!computer-vision/fire-detection/runs/candle_yolo/
+computer-vision/fire-detection/runs/candle_yolo/*
+!computer-vision/fire-detection/runs/candle_yolo/weights/
+computer-vision/fire-detection/runs/candle_yolo/weights/*
+!computer-vision/fire-detection/runs/candle_yolo/weights/best.pt
+datasets/
+*.pt
+!computer-vision/fire-detection/runs/candle_yolo/weights/best.pt
+*.engine
+*.onnx
+
+# Downloaded shared model weights
+weights/
