@@ -45,7 +45,37 @@ This is a single PlatformIO project for the whole firmware, structured so each h
 - `platformio.ini` — board/framework config and dependencies (`lib_deps`). Add third-party libraries there as areas need them (e.g. `ESP32Servo` for motor control).
 - `test/` — PlatformIO unit tests (`pio test`), if/when we add them.
 
-Pin map, Wi-Fi setup, and how the firmware receives a fire location from `computer-vision/` should be documented here (or in `include/`) once those are decided.
+### Pin map (current `src/main.cpp`)
+
+| Function | ESP32 pin |
+|---|---|
+| Motor 1 STEP / DIR | D18 / D19 |
+| Motor 2 STEP / DIR | D21 / D22 |
+| Pump MOSFET TRIG | D23 |
+
+Drivers: TMC2208, 1/8 microstep when MS1/MS2 are open. VDD → 3V3, shared GND.
+
+### Vision link (USB serial, 115200 baud)
+
+The flame detector sends newline-terminated lines:
+
+```text
+PAN:<float>,TILT:<float>
+```
+
+- `pan < 0` → motor 1 left; `pan > 0` → motor 1 right; `0` → stop motor 1
+- `tilt < 0` → motor 2 back (up); `tilt > 0` → motor 2 forward (down); `0` → stop motor 2
+- Laptop must keep sending while tracking (`JOG_TIMEOUT_MS` is 500 ms)
+- One-letter Wi-Fi / Serial Monitor jog commands still work
+- Axis sense: `PAN_AXIS_INVERT` / `TILT_AXIS_INVERT` in `main.cpp`
+
+On the laptop set `SERIAL_PORT` and `SIMULATION_MODE = False` in
+`computer-vision/fire-detection/config.py`, then run `detect_candle_flame.py`.
+
+### Manual Wi-Fi jog
+
+With `OWN_NETWORK = true`, join Wi-Fi `StepperControl` and open
+`http://192.168.4.1` (password in `main.cpp`).
 
 ## Workflow
 

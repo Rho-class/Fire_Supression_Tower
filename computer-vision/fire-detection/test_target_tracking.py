@@ -53,6 +53,15 @@ class TrackingTests(unittest.TestCase):
     def test_serial_message_format(self) -> None:
         self.assertEqual(format_motor_command(12.5, -7), "PAN:12.50,TILT:-7.00")
 
+    def test_zero_command_stops_both_axes(self) -> None:
+        self.assertEqual(format_motor_command(0.0, 0.0), "PAN:0.00,TILT:0.00")
+
+    def test_simulation_send_returns_payload(self) -> None:
+        from motor_interface import send_motor_command
+
+        payload = send_motor_command(-1.5, 2.25, simulation_mode=True)
+        self.assertEqual(payload, "PAN:-1.50,TILT:2.25")
+
 
 if __name__ == "__main__":
     unittest.main()
