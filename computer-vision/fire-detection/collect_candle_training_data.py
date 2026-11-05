@@ -11,6 +11,9 @@ from typing import Literal
 import cv2
 import numpy as np
 
+from camera_capture import open_camera
+from config import CAMERA_INDEX, CAPTURE_FPS, CAPTURE_HEIGHT, CAPTURE_WIDTH
+
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_DATASET = HERE / "datasets" / "candle-fire"
@@ -275,12 +278,7 @@ def collect(
     capture_height: int,
     capture_fps: int,
 ) -> None:
-    camera = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, capture_width)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, capture_height)
-    camera.set(cv2.CAP_PROP_FPS, capture_fps)
-    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    camera = open_camera(camera_index, capture_width, capture_height, capture_fps)
     if not camera.isOpened():
         camera.release()
         raise RuntimeError(f"Camera {camera_index} could not be opened.")
@@ -413,12 +411,12 @@ def collect(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("negative", "positive"), required=True)
-    parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--camera", type=int, default=CAMERA_INDEX)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--split", choices=("train", "val", "test"), default="train")
-    parser.add_argument("--width", type=int, default=1920)
-    parser.add_argument("--height", type=int, default=1080)
-    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--width", type=int, default=CAPTURE_WIDTH)
+    parser.add_argument("--height", type=int, default=CAPTURE_HEIGHT)
+    parser.add_argument("--fps", type=int, default=CAPTURE_FPS)
     return parser.parse_args()
 
 

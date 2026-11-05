@@ -1,4 +1,4 @@
-"""Run the dedicated one-class flame detector on a Logitech webcam."""
+"""Run the dedicated one-class flame detector on the Acer webcam."""
 
 from __future__ import annotations
 
@@ -9,7 +9,21 @@ from typing import Any, TypedDict
 
 import cv2
 
-from config import CONFIRMATION_FRAMES, DEADZONE_X, DEADZONE_Y, SIMULATION_MODE
+from camera_capture import LatestFrameCamera, apply_digital_zoom, open_camera
+from config import (
+    CAMERA_INDEX,
+    CAPTURE_FPS,
+    CAPTURE_HEIGHT,
+    CAPTURE_WIDTH,
+    CONFIRMATION_FRAMES,
+    DEADZONE_X,
+    DEADZONE_Y,
+    DIGITAL_ZOOM,
+    DISPLAY_HEIGHT,
+    DISPLAY_WIDTH,
+    INFERENCE_IMGSZ,
+    SIMULATION_MODE,
+)
 from motor_interface import send_motor_command
 from target_tracking import ProportionalFlameTracker, TrackingResult, TrackingState
 
@@ -209,33 +223,29 @@ def run_webcam(
             "Note: the current TensorRT engine has a fixed 640x640 input. "
             "Use --model runs\\candle_yolo\\weights\\best.pt for larger --imgsz values."
         )
-    camera = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, capture_width)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, capture_height)
-    camera.set(cv2.CAP_PROP_FPS, capture_fps)
-    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-    if not camera.isOpened():
-        camera.release()
+    capture = open_camera(camera_index, capture_width, capture_height, capture_fps)
+    if not capture.isOpened():
+        capture.release()
         raise RuntimeError(
-            f"Camera {camera_index} could not be opened. Try --camera 1 or --camera 2."
+            f"Camera {camera_index} could not be opened. Try --camera 0 or --camera 1."
         )
 
-    actual_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-    actual_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    actual_fps = camera.get(cv2.CAP_PROP_FPS)
+    actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    actual_fps = capture.get(cv2.CAP_PROP_FPS)
     print(f"Camera resolution: {actual_width}x{actual_height} at {actual_fps:.1f} FPS")
     if actual_width != capture_width or actual_height != capture_height:
         print(
             f"Warning: requested {capture_width}x{capture_height}, but the camera "
             f"selected {actual_width}x{actual_height}."
         )
+    camera = LatestFrameCamera(capture)
     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_TITLE, display_width, display_height)
     print(
         f"Display window: {display_width}x{display_height} "
-        f"(detection still uses the full {actual_width}x{actual_height} camera frame)"
+        f"(detection uses the latest {actual_width}x{actual_height} frame, "
+        f"zoom={DIGITAL_ZOOM:g}, imgsz={imgsz})"
     )
     print("Press Q in the camera window to close.")
 
@@ -245,8 +255,12 @@ def run_webcam(
     try:
         while True:
             success, frame = camera.read()
-            if not success:
-                raise RuntimeError("The camera opened, but a frame could not be read.")
+            if not success or frame is None:
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+                continue
+
+            frame = apply_digital_zoom(frame, DIGITAL_ZOOM)
 
             result = model.predict(
                 source=frame,
@@ -333,15 +347,15 @@ def run_webcam(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, default=default_model_path())
-    parser.add_argument("--camera", type=int, default=0)
-    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--camera", type=int, default=CAMERA_INDEX)
+    parser.add_argument("--imgsz", type=int, default=INFERENCE_IMGSZ)
     parser.add_argument("--conf", type=float, default=CONFIDENCE_THRESHOLD)
     parser.add_argument("--iou", type=float, default=IOU_THRESHOLD)
-    parser.add_argument("--width", type=int, default=1920)
-    parser.add_argument("--height", type=int, default=1080)
-    parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--display-width", type=int, default=1280)
-    parser.add_argument("--display-height", type=int, default=720)
+    parser.add_argument("--width", type=int, default=CAPTURE_WIDTH)
+    parser.add_argument("--height", type=int, default=CAPTURE_HEIGHT)
+    parser.add_argument("--fps", type=int, default=CAPTURE_FPS)
+    parser.add_argument("--display-width", type=int, default=DISPLAY_WIDTH)
+    parser.add_argument("--display-height", type=int, default=DISPLAY_HEIGHT)
     return parser.parse_args()
 
 

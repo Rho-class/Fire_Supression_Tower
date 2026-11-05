@@ -49,7 +49,7 @@ working `train` and `val` paths. The training script verifies those paths and
 writes a generated configuration that normalizes the class to `0 = flame`.
 The downloaded dataset and generated configuration are ignored by Git.
 
-Future Logitech-camera training images should include small candle flames at
+Future Acer-camera training images should include small candle flames at
 about 5 feet and, where practical, 10 feet. Add hard-negative images of
 flashlights, red/orange objects, desk lamps, reflections, unlit candles, and
 phone screens. A negative image must have a matching empty YOLO label file.
@@ -85,20 +85,28 @@ The default model preference is `best.engine`, followed by `best.pt`:
 
 ```powershell
 python detect_candle_flame.py
-python detect_candle_flame.py --model runs\candle_yolo\weights\best.pt --camera 0
+python detect_candle_flame.py --model runs\candle_yolo\weights\best.pt
 ```
 
-The detector requests Logitech capture at 1280x720 using MJPG, runs inference
-on CUDA device 0, and displays every detected flame with its confidence,
-bounding box, and center point, plus resolution and FPS. Press **Q** to close
-it cleanly.
+Defaults come from `config.py`: Acer WBC-0E01 on `--camera 1` at 1280x720
+MJPG (wider FOV / lower latency than 1080p on this cam). Index `0` is the
+laptop Acer FHD camera. The detector keeps only the latest camera frame while
+YOLO runs, then overlays confidence, box, center, deadzone, resolution, and
+FPS. Press **Q** to close it cleanly. `camera_test.py` is preview only — it
+does not track flames.
+
+Quick camera check before detection:
+
+```powershell
+python camera_test.py
+```
 
 For distant flames, use the PyTorch checkpoint at a larger inference size and
 optionally lower the confidence threshold. This is slower and may produce more
 false positives:
 
 ```powershell
-python detect_candle_flame.py --model runs\candle_yolo\weights\best.pt --imgsz 960 --conf 0.30 --iou 0.35 --width 1920 --height 1080 --fps 30
+python detect_candle_flame.py --model runs\candle_yolo\weights\best.pt --imgsz 960 --conf 0.30 --iou 0.35
 ```
 
 `--width` and `--height` control camera capture resolution; `--imgsz` controls
