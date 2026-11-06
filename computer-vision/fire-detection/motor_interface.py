@@ -17,11 +17,13 @@ def send_motor_command(
     tilt_command: float,
     *,
     simulation_mode: bool = SIMULATION_MODE,
+    log_simulation: bool = True,
 ) -> str:
     """Print a simulated command or reject unimplemented hardware output."""
     message = format_motor_command(pan_command, tilt_command)
     if simulation_mode:
-        print(message, flush=True)
+        if log_simulation:
+            print(message, flush=True)
         return message
 
     raise RuntimeError(

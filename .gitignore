@@ -15,6 +15,7 @@ computer-vision/fire-detection/runs/candle_yolo/*
 !computer-vision/fire-detection/runs/candle_yolo/weights/
 computer-vision/fire-detection/runs/candle_yolo/weights/*
 !computer-vision/fire-detection/runs/candle_yolo/weights/best.pt
+computer-vision/fire-detection/evaluation-videos/
 datasets/
 *.pt
 !computer-vision/fire-detection/runs/candle_yolo/weights/best.pt

@@ -17,9 +17,39 @@ from target_tracking import ProportionalFlameTracker, TrackingResult, TrackingSt
 HERE = Path(__file__).resolve().parent
 DEFAULT_PT_MODEL = HERE / "runs" / "candle_yolo" / "weights" / "best.pt"
 DEFAULT_ENGINE_MODEL = HERE / "runs" / "candle_yolo" / "weights" / "best.engine"
-CONFIDENCE_THRESHOLD = 0.30
+CONFIDENCE_THRESHOLD = 0.40
 IOU_THRESHOLD = 0.35
 WINDOW_TITLE = "Fire Tower - Candle Flame Detector"
+CAMERA_CALIBRATION_DIR = HERE / "runs" / "camera-calibration"
+
+CAMERA_CONTROL_PROPERTIES = {
+    "brightness": cv2.CAP_PROP_BRIGHTNESS,
+    "contrast": cv2.CAP_PROP_CONTRAST,
+    "saturation": cv2.CAP_PROP_SATURATION,
+    "gain": cv2.CAP_PROP_GAIN,
+    "exposure": cv2.CAP_PROP_EXPOSURE,
+    "sharpness": cv2.CAP_PROP_SHARPNESS,
+    "white_balance": cv2.CAP_PROP_WB_TEMPERATURE,
+    "auto_white_balance": cv2.CAP_PROP_AUTO_WB,
+    "focus": cv2.CAP_PROP_FOCUS,
+    "auto_exposure": cv2.CAP_PROP_AUTO_EXPOSURE,
+    "autofocus": cv2.CAP_PROP_AUTOFOCUS,
+    "backlight": cv2.CAP_PROP_BACKLIGHT,
+}
+
+CANDLE_CAMERA_PROFILE = {
+    "brightness": 24.0,
+    "contrast": 22.0,
+    "saturation": 36.0,
+    "gain": 0.0,
+    "sharpness": 32.0,
+    "auto_white_balance": 1.0,
+    "backlight": 0.0,
+    "autofocus": 0.0,
+    "focus": 566.0,
+    "auto_exposure": 0.25,
+    "exposure": -6.0,
+}
 
 
 class DetectedFlame(TypedDict):
@@ -124,6 +154,43 @@ def safe_stop_motors() -> None:
         print(f"Motor stop warning: {exc}")
 
 
+def print_camera_controls(camera: cv2.VideoCapture) -> None:
+    """Log camera values after the native DirectShow settings dialog closes."""
+    values = ", ".join(
+        f"{name}={camera.get(property_id):g}"
+        for name, property_id in CAMERA_CONTROL_PROPERTIES.items()
+    )
+    print(f"Camera controls: {values}", flush=True)
+
+
+def apply_camera_profile(camera: cv2.VideoCapture, profile_name: str) -> None:
+    """Apply a reproducible DirectShow camera profile and report driver results."""
+    if profile_name != "candle":
+        return
+
+    print("Applying candle camera profile:", flush=True)
+    for name, requested_value in CANDLE_CAMERA_PROFILE.items():
+        property_id = CAMERA_CONTROL_PROPERTIES[name]
+        accepted = camera.set(property_id, requested_value)
+        actual_value = camera.get(property_id)
+        status = "accepted" if accepted else "rejected"
+        print(
+            f"  {name}: requested {requested_value:g}, "
+            f"actual {actual_value:g} ({status})",
+            flush=True,
+        )
+
+
+def save_calibration_frame(frame: Any, label: str = "manual") -> Path:
+    """Save a full-resolution frame for exposure and focus review."""
+    CAMERA_CALIBRATION_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    image_path = CAMERA_CALIBRATION_DIR / f"acer_{label}_{timestamp}.jpg"
+    cv2.imwrite(str(image_path), frame)
+    print(f"Saved calibration frame: {image_path}", flush=True)
+    return image_path
+
+
 def draw_tracking_debug(
     frame: Any,
     tracking: TrackingResult,
@@ -189,6 +256,9 @@ def run_webcam(
     capture_width: int,
     capture_height: int,
     capture_fps: int,
+    exposure: float | None,
+    camera_profile: str,
+    auto_save_calibration: bool,
     display_width: int,
     display_height: int,
 ) -> FlameDetection:
@@ -204,16 +274,19 @@ def run_webcam(
     from ultralytics import YOLO
 
     model = YOLO(str(model_path))
-    if model_path.suffix.lower() == ".engine" and imgsz != 640:
-        print(
-            "Note: the current TensorRT engine has a fixed 640x640 input. "
-            "Use --model runs\\candle_yolo\\weights\\best.pt for larger --imgsz values."
-        )
     camera = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, capture_width)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, capture_height)
     camera.set(cv2.CAP_PROP_FPS, capture_fps)
+    # Set MJPEG last: this Acer camera resets to bandwidth-heavy YUYV when
+    # resolution is changed. YUYV is limited to 5 FPS at 1080p, while MJPEG
+    # supports 30 FPS.
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    if exposure is not None:
+        # DirectShow uses 0.25 for manual exposure. A value near -6 keeps the
+        # shutter fast enough for 30 FPS while avoiding flame-driven pulsing.
+        camera.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+        camera.set(cv2.CAP_PROP_EXPOSURE, exposure)
     camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     if not camera.isOpened():
@@ -222,10 +295,22 @@ def run_webcam(
             f"Camera {camera_index} could not be opened. Try --camera 1 or --camera 2."
         )
 
+    apply_camera_profile(camera, camera_profile)
+
     actual_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
     actual_fps = camera.get(cv2.CAP_PROP_FPS)
-    print(f"Camera resolution: {actual_width}x{actual_height} at {actual_fps:.1f} FPS")
+    actual_fourcc_value = int(camera.get(cv2.CAP_PROP_FOURCC))
+    actual_fourcc = "".join(
+        chr((actual_fourcc_value >> (8 * index)) & 0xFF) for index in range(4)
+    )
+    print(
+        f"Camera resolution: {actual_width}x{actual_height} at "
+        f"{actual_fps:.1f} FPS ({actual_fourcc})"
+    )
+    if exposure is not None:
+        actual_exposure = camera.get(cv2.CAP_PROP_EXPOSURE)
+        print(f"Camera exposure: manual {actual_exposure:g}")
     if actual_width != capture_width or actual_height != capture_height:
         print(
             f"Warning: requested {capture_width}x{capture_height}, but the camera "
@@ -237,27 +322,41 @@ def run_webcam(
         f"Display window: {display_width}x{display_height} "
         f"(detection still uses the full {actual_width}x{actual_height} camera frame)"
     )
-    print("Press Q in the camera window to close.")
+    print("Press S for camera settings, C to save a calibration frame, or Q to close.")
+    print_camera_controls(camera)
 
     tracker = ProportionalFlameTracker()
     previous_time = time.perf_counter()
+    last_fps_report = previous_time
+    smoothed_fps = 0.0
+    smoothed_capture_ms = 0.0
+    smoothed_inference_ms = 0.0
+    frame_count = 0
 
     try:
         while True:
+            capture_started = time.perf_counter()
             success, frame = camera.read()
+            capture_ms = (time.perf_counter() - capture_started) * 1000.0
             if not success:
                 raise RuntimeError("The camera opened, but a frame could not be read.")
+            frame_count += 1
+            if auto_save_calibration and frame_count == 60:
+                save_calibration_frame(frame, "auto")
 
+            inference_started = time.perf_counter()
             result = model.predict(
                 source=frame,
                 conf=confidence_threshold,
                 iou=iou_threshold,
                 imgsz=imgsz,
-                max_det=50,
+                max_det=10,
                 device=0,
+                quantize=16,
                 rect=False,
                 verbose=False,
             )[0]
+            inference_ms = (time.perf_counter() - inference_started) * 1000.0
             detection = strongest_flame(result)
             height, width = frame.shape[:2]
             tracking = tracker.update(
@@ -275,11 +374,31 @@ def run_webcam(
                 tracking.pan_correction,
                 tracking.tilt_correction,
                 simulation_mode=SIMULATION_MODE,
+                log_simulation=False,
             )
 
             now = time.perf_counter()
             fps = 1.0 / max(now - previous_time, 0.0001)
             previous_time = now
+            smoothed_fps = fps if smoothed_fps == 0.0 else (0.9 * smoothed_fps) + (0.1 * fps)
+            smoothed_capture_ms = (
+                capture_ms
+                if smoothed_capture_ms == 0.0
+                else (0.9 * smoothed_capture_ms) + (0.1 * capture_ms)
+            )
+            smoothed_inference_ms = (
+                inference_ms
+                if smoothed_inference_ms == 0.0
+                else (0.9 * smoothed_inference_ms) + (0.1 * inference_ms)
+            )
+            if now - last_fps_report >= 5.0:
+                print(
+                    f"Processing FPS: {smoothed_fps:.1f} "
+                    f"(capture {smoothed_capture_ms:.1f} ms, "
+                    f"inference {smoothed_inference_ms:.1f} ms)",
+                    flush=True,
+                )
+                last_fps_report = now
 
             for flame in detection["detections"]:
                 x1, y1, x2, y2 = flame["bounding_box"]
@@ -310,7 +429,7 @@ def run_webcam(
 
             cv2.rectangle(frame, (0, 0), (width, 42), (0, 0, 0), -1)
             cv2.putText(frame, status, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 165, 255), 2)
-            overlay = f"{width}x{height}  FPS: {fps:.1f}"
+            overlay = f"{width}x{height}  FPS: {smoothed_fps:.1f}"
             cv2.putText(frame, overlay, (max(width - 245, 10), 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
             draw_tracking_debug(
                 frame,
@@ -320,8 +439,14 @@ def run_webcam(
             )
 
             cv2.imshow(WINDOW_TITLE, frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
                 break
+            if key == ord("s"):
+                camera.set(cv2.CAP_PROP_SETTINGS, 1)
+                print_camera_controls(camera)
+            if key == ord("c"):
+                save_calibration_frame(frame)
     finally:
         safe_stop_motors()
         camera.release()
@@ -340,6 +465,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--exposure",
+        type=float,
+        default=None,
+        help="Lock DirectShow exposure (try -6 for a 30 FPS webcam stream).",
+    )
+    parser.add_argument(
+        "--camera-profile",
+        choices=("default", "candle"),
+        default="default",
+        help="Apply reproducible webcam controls tuned for the target scene.",
+    )
+    parser.add_argument(
+        "--auto-save-calibration",
+        action="store_true",
+        help="Save one clean full-resolution frame after camera warm-up.",
+    )
     parser.add_argument("--display-width", type=int, default=1280)
     parser.add_argument("--display-height", type=int, default=720)
     return parser.parse_args()
@@ -356,6 +498,9 @@ def main() -> None:
         args.width,
         args.height,
         args.fps,
+        args.exposure,
+        args.camera_profile,
+        args.auto_save_calibration,
         args.display_width,
         args.display_height,
     )
