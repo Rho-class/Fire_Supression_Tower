@@ -52,7 +52,7 @@ class CandidateSettings:
     # camera renders the room's lights neutral/blue, while a candle flame, far
     # warmer than any room light, renders orange. Measured on the C270 at
     # exposure -7: 147 hall-light spots never exceeded +3.8; candle/lighter
-    # flames at 1-10 ft were all above +22.
+    # lighter flames at 1-10 ft were above +22; a candle at 7.5-10 ft is ~+12.
     min_warmth: float | None = None
 
 

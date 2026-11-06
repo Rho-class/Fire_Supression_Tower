@@ -9,7 +9,8 @@ Runs fully autonomously: no setup or key presses are needed. Every frame:
   1. bright-spot finder over the whole 1280x720 frame (two_stage_detector.py)
   2. colour gate: spots whose glow is not warm are rejected. Under auto white
      balance room lights render neutral/blue and a candle renders orange
-     (measured: lights <= +3.8, flames >= +22 red-minus-blue)
+     (measured: small room lights <= +3.8; candle ~+12 at 7.5-10 ft, more
+     when closer; gate at +8)
   3. large spots must pass YOLO; small far flames pass the spot rule
      (bright, flame-shaped), since YOLO cannot recognise them beyond ~5 ft
   4. the existing tracker requires CONFIRMATION_FRAMES consecutive frames
@@ -387,6 +388,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
             enabled=not args.no_spot_rule,
             max_height=args.spot_max_height,
             min_contrast=args.spot_min_contrast,
+            min_aspect=args.spot_min_aspect,
         ),
     )
     camera = open_c270(args.camera, args.width, args.height, args.fps, args.exposure)
@@ -538,9 +540,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-warmth",
         type=float,
-        default=10.0,
+        default=8.0,
         help="Colour gate: reject spots whose glow is not this warm (red minus blue). "
-        "Hall lights measured <= +3.8, flames >= +22. Negative disables it.",
+        "Small room lights measured <= +3.8; a candle at 10 ft ~+12. "
+        "Negative disables it.",
     )
     parser.add_argument(
         "--no-spot-rule",
@@ -552,6 +555,14 @@ def parse_args() -> argparse.Namespace:
                         "The colour gate already rejects room lights, so this only "
                         "keeps very large blobs for YOLO to judge.")
     parser.add_argument("--spot-min-contrast", type=float, default=150.0)
+    parser.add_argument(
+        "--spot-min-aspect",
+        type=float,
+        default=1.0,
+        help="Far-flame spots must be at least this tall relative to wide. A candle "
+        "at 7.5-10 ft is nearly round (about 10x13 px), so the default only "
+        "rejects wide spots.",
+    )
     parser.add_argument(
         "--ignore-top",
         type=float,
