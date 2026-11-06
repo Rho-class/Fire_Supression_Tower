@@ -295,8 +295,30 @@ candle images and zero false confirmation events in the available no-flame
 video. Continue recording longer and more varied video before treating the
 result as a safety claim.
 
+## ESP32 USB aiming link
+
+By default `SIMULATION_MODE = True` in `config.py` and the detector only prints
+`PAN:…,TILT:…` lines. To drive the steppers over USB:
+
+1. Flash `firmware/` (`pio run -t upload`) and note the ESP32 COM port.
+2. Set `SERIAL_PORT` (for example `COM3`) and `SIMULATION_MODE = False` in
+   `config.py`.
+3. Install pyserial if needed: `python -m pip install pyserial`
+4. Run the detector (keep sending while a flame is tracked so the firmware jog
+   timeout does not stop the motors):
+
+```powershell
+python detect_candle_flame.py --model runs\candle_yolo\weights\best.pt --camera 1 --width 1280 --height 720
+```
+
+5. Off-center flame → motors jog toward the error; centered / no flame / **Q** →
+   both axes stop (`PAN:0,TILT:0`). Pump is not commanded by this link.
+6. If an axis is reversed, toggle `PAN_INVERT` / `TILT_INVERT` here or
+   `PAN_AXIS_INVERT` / `TILT_AXIS_INVERT` in `firmware/src/main.cpp`.
+
 ## Safety
 
-Use simulated targets for development. Pump control must remain off. Person
-detection and the no-spray decision are a separate safety layer and must be
-validated before any complete suppression system is operated.
+Use simulated targets for development. Keep `SIMULATION_MODE = True` until the
+ESP32 link is intentionally enabled. Pump control must remain off for vision
+tests. Person detection and the no-spray decision are a separate safety layer
+and must be validated before any complete suppression system is operated.

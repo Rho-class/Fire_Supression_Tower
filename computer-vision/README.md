@@ -24,8 +24,9 @@ webcam on a CUDA-capable Windows laptop. The dedicated one-class flame model,
 training instructions, and webcam test are documented in
 `fire-detection/README.md`.
 
-Fire localization is still separate and has not yet been scaffolded. The
-detector exposes flame bounding-box and center-pixel coordinates for that work.
+Fire localization / aiming: the detector computes pan/tilt corrections and can
+send `PAN:/TILT:` lines to the ESP32 over USB when `SIMULATION_MODE` is false
+(see `fire-detection/config.py` and `firmware/README.md`).
 
 ## Workflow
 

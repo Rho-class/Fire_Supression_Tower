@@ -10,7 +10,7 @@ from typing import Any, TypedDict
 import cv2
 
 from config import CONFIRMATION_FRAMES, DEADZONE_X, DEADZONE_Y, SIMULATION_MODE
-from motor_interface import send_motor_command
+from motor_interface import close_serial, send_motor_command
 from target_tracking import ProportionalFlameTracker, TrackingResult, TrackingState
 
 
@@ -150,8 +150,10 @@ def safe_stop_motors() -> None:
     """Best-effort fail-safe used on shutdown and exception paths."""
     try:
         send_motor_command(0.0, 0.0, simulation_mode=SIMULATION_MODE)
-    except Exception as exc:  # Hardware output is intentionally not implemented yet.
+    except Exception as exc:
         print(f"Motor stop warning: {exc}")
+    finally:
+        close_serial()
 
 
 def print_camera_controls(camera: cv2.VideoCapture) -> None:
