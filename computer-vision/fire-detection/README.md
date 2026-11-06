@@ -79,6 +79,26 @@ that happens, restart training with the discovered safe value:
 python train_candle_yolo_cuda.py --batch 2
 ```
 
+## C270 two-stage detector (5–10 ft, current)
+
+For candle detection at 5–10 ft, use the Logitech C270 and
+`detect_candle_flame_c270.py`. It runs autonomously with no setup keys:
+manual exposure −7 and automatic white balance, a bright-spot finder, a colour
+gate that rejects room lights (they render neutral/blue; a candle renders
+orange), a YOLO check for near flames, a spot rule for far flames, and the
+existing 5-frame tracker with simulated pan/tilt output. The Acer WBC-0E01
+cannot set exposure, so distant flames clip to white and are not detected
+reliably.
+
+```powershell
+.\.venv\Scripts\python.exe .\detect_candle_flame_c270.py                  # autonomous
+.\.venv\Scripts\python.exe .\detect_candle_flame_c270.py --guided         # distance test
+.\.venv\Scripts\python.exe .\detect_candle_flame_c270.py --pan-tilt-test  # aiming test
+```
+
+Design, measurements, live results, and limitations are in
+`docs/Fire_Suppression_Tower_Technical_Appendix.md`, Section K.
+
 ## Webcam detection
 
 The default model preference is `best.engine`, followed by `best.pt`:
