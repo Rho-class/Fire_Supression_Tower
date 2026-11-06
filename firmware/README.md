@@ -16,7 +16,35 @@ Computer vision stays in `computer-vision/`. This folder receives a fire locatio
 - **Framework**: Arduino (`framework = arduino`)
 - **Build system**: [PlatformIO](https://platformio.org/), via the PlatformIO IDE extension or the `pio` CLI
 
-### Build / flash / monitor
+### First time flashing (PlatformIO in VS Code)
+
+1. In VS Code: **File > Open Workspace from File...** and pick
+   `Fire_Suppression_Tower.code-workspace` in the repo root. PlatformIO only
+   shows its buttons when it can see `firmware/platformio.ini` as a top folder.
+   Wait for the bottom status bar to show the PlatformIO icons (first open can
+   take a minute while it indexes).
+2. **Motor power OFF** (the 12 V / driver supply). Plug the ESP32 in with a
+   *data* USB cable; some cables are charge-only.
+3. Check the board appeared: PlatformIO sidebar (alien-head icon) >
+   **PROJECT TASKS > esp32dev > General > Upload** uses auto-detect. To see the
+   port first, open **PlatformIO Home > Devices**. You want a "CP210x",
+   "CH340" or "USB Serial" entry, *not* "Standard Serial over Bluetooth"
+   (COM3/COM4 on the Acer laptop are Bluetooth). If only Bluetooth ports
+   show, install the USB driver for the chip on the board (Silicon Labs CP210x
+   or WCH CH340) and replug.
+4. Click **Upload** (or the right-arrow icon in the bottom bar). It builds,
+   then flashes. If it stalls at `Connecting.....`, hold the board's **BOOT**
+   button until the percentage starts climbing, then let go.
+5. When it says `SUCCESS`, click **Monitor** (plug icon in the bottom bar).
+   Press the board's **EN/RST** button; you should see a `READY` line.
+   Close the monitor before running any Python motor script — only one
+   program can hold the COM port.
+
+If upload picks the wrong port, uncomment `upload_port` / `monitor_port` in
+`platformio.ini` and set them to the ESP32's COM number. If it fails with
+"timed out" or "packet header", set `upload_speed = 115200`.
+
+### Build / flash / monitor (command line)
 
 From this `firmware/` directory:
 

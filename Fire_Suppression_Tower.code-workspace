@@ -1,0 +1,16 @@
+{
+  // Open this file in VS Code (File > Open Workspace from File...) so the
+  // PlatformIO extension finds firmware/platformio.ini and shows its
+  // Build / Upload / Monitor buttons, while the whole repo stays visible.
+  "folders": [
+    { "name": "firmware (PlatformIO)", "path": "firmware" },
+    { "name": "Fire_Supression_Tower (repo)", "path": "." }
+  ],
+  "settings": {
+    "files.exclude": { "**/.pio": true },
+    "search.exclude": { "**/.pio": true }
+  },
+  "extensions": {
+    "recommendations": ["platformio.platformio-ide"]
+  }
+}
