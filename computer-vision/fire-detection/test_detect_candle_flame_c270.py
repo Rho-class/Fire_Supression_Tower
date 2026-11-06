@@ -61,5 +61,13 @@ class PanTiltVerdictTests(unittest.TestCase):
         self.assertEqual(pan_tilt_verdict("5ft", step_rows("5ft", (640, 360))), "")
 
 
+class StartupHelpTests(unittest.TestCase):
+    def test_key_help_is_found_in_docstring(self) -> None:
+        # Regression: startup crashed when the docstring heading was renamed.
+        from detect_candle_flame_c270 import KEY_HELP
+
+        self.assertIn("Q quit", KEY_HELP)
+
+
 if __name__ == "__main__":
     unittest.main()

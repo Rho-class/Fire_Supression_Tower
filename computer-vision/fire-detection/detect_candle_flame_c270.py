@@ -67,6 +67,8 @@ DISTANCE_KEYS = {ord("1"): "1ft", ord("5"): "5ft", ord("7"): "7.5ft", ord("0"): 
                  ord("n"): "no-candle", ord("N"): "no-candle"}
 LOG_DIR = HERE / "runs" / "c270-live"
 HOLD_FRAMES = 3  # keep the last target through this many missed frames
+# Startup help: the docstring's key section (empty if the heading is renamed).
+KEY_HELP = (__doc__ or "").partition("Optional keys")[2].strip()
 
 PAN_TILT_STEPS = (
     ("no-candle", 10, "NO FLAME in view.  SPACE = start 10 s"),
@@ -391,7 +393,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
     exposure = args.exposure
     height, width = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
     print(f"Camera: {width}x{height} MJPG, gain 0, manual exposure")
-    print(__doc__.split("Keys:")[1])
+    print(KEY_HELP)
     print("Detecting autonomously - no setup needed.", flush=True)
 
     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
