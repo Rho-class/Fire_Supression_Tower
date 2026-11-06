@@ -77,7 +77,7 @@ constexpr int   MICROSTEPS         = 8;     // MS1/MS2 open on TMC2208
 constexpr float STEPS_PER_REV      = FULL_STEPS_PER_REV * MICROSTEPS;  // 1600
 
 // Set true for a motor that turns the wrong way.
-constexpr bool M1_INVERT_DIRECTION = false;
+constexpr bool M1_INVERT_DIRECTION = true;   // pan motor is mounted reversed
 constexpr bool M2_INVERT_DIRECTION = false;
 
 // Flip the vision PAN:/TILT: axis sense without rewiring (after laptop invert flags).
