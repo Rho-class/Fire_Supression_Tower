@@ -321,8 +321,10 @@ python detect_candle_flame.py --model runs\candle_yolo\weights\best.pt --camera 
 The C270 detector drives the motors only with `--motors`; `config.py` can stay
 in simulation. `SERIAL_PORT = "auto"` finds the ESP32 by its USB chip and never
 picks a Bluetooth port. The firmware stops each axis at a soft travel limit
-(`PAN_LIMIT_DEG`, `TILT_LIMIT_DEG` from the power-on position) and scales
-tracking speed with the correction (`TRACK_MIN_RPM`..`TRACK_MAX_RPM`).
+(`PAN_LIMIT_DEG` ±45°, `TILT_LIMIT_DEG` ±20° of head travel from the power-on
+position) and scales tracking speed with the correction (3–25 head degrees per
+second). Gear ratios are set in `firmware/src/main.cpp`: pan 8:1, tilt about
+5:1 (motor turns per head turn).
 
 1. Flash: from `firmware/`, `pio run -t upload` (ESP32 plugged in by USB).
 2. Point the head straight ahead and level, then reset or power-cycle the ESP32;

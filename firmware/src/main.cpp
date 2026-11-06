@@ -32,7 +32,8 @@
 //   PAN:<float>,TILT:<float>
 //   pan < 0 -> motor 1 left;  pan > 0 -> motor 1 right;  pan == 0 -> stop M1
 //   tilt < 0 -> motor 2 back (up); tilt > 0 -> motor 2 forward (down); 0 -> stop M2
-//   Speed scales with |pan| / |tilt| from TRACK_MIN_RPM to TRACK_MAX_RPM (over USB serial).
+//   Speed scales with |pan| / |tilt| from TRACK_MIN_DEG_PER_S to TRACK_MAX_DEG_PER_S
+//   of head motion (over USB serial), using PAN_GEAR_RATIO / TILT_GEAR_RATIO.
 //   The laptop must keep sending while tracking so JOG_TIMEOUT_MS does not stop the motors.
 //
 // Safety:
@@ -91,21 +92,20 @@ constexpr float PAN_TILT_EPS = 0.001f;
 // from the position at power-on or after the 'Z' command. Power on, or press
 // 'Z', with the head pointing straight ahead and level.
 //
-// *_GEAR_RATIO = motor turns per one turn of the head. Left at 1.0, limits and
-// speeds are motor-shaft values; with a reduction gear or belt the head moves
-// LESS far and slower than these numbers (the safe direction). Set the real
-// ratio once it is known so the limits become head degrees.
-constexpr float PAN_GEAR_RATIO  = 1.0f;
-constexpr float TILT_GEAR_RATIO = 1.0f;
+// *_GEAR_RATIO = motor turns per one turn of the head (both axes are
+// reductions). Limits and tracking speeds below are HEAD degrees.
+constexpr float PAN_GEAR_RATIO  = 8.0f;     // 8:1 - motor turns 8x per head turn
+constexpr float TILT_GEAR_RATIO = 5.0f;     // ~5:1 - motor turns ~5x per head turn
 constexpr float PAN_LIMIT_DEG   = 45.0f;    // each side of centre
 constexpr float TILT_LIMIT_DEG  = 20.0f;    // up and down from level
 
-// Laptop tracking speed scales with the size of the PAN/TILT correction
-// (0..TRACK_FULL_COMMAND, the laptop's MAX_PAN/TILT_COMMAND): slow near the
-// target so the head does not overshoot, faster when the flame is far off.
-constexpr float TRACK_MIN_RPM      = 2.0f;
-constexpr float TRACK_MAX_RPM      = 10.0f;
-constexpr float TRACK_FULL_COMMAND = 25.0f;
+// Laptop tracking speed (head degrees per second) scales with the size of the
+// PAN/TILT correction (0..TRACK_FULL_COMMAND, the laptop's MAX_PAN/TILT_COMMAND):
+// slow near the target so the head does not overshoot the 40 px (~1.5 deg on
+// the C270) dead zone, faster when the flame is far off-centre.
+constexpr float TRACK_MIN_DEG_PER_S = 3.0f;
+constexpr float TRACK_MAX_DEG_PER_S = 25.0f;
+constexpr float TRACK_FULL_COMMAND  = 25.0f;
 
 // Speed presets in revolutions per minute, selected with speed up / down.
 const float SPEED_RPM[] = {15, 30, 60, 90, 120, 180, 360, 720};
@@ -123,6 +123,7 @@ struct Motor {
   uint32_t lastJogMs  = 0;
   int      speedIndex = DEFAULT_SPEED;      // each motor has its own speed
   long     limitSteps = 0;                  // soft travel limit, +/- from zero
+  float    gearRatio  = 1.0f;               // motor turns per head turn
   bool     limitReported = false;
   Motor(uint8_t stepPin, uint8_t dirPin) : stepper(AccelStepper::DRIVER, stepPin, dirPin) {}
 };
@@ -214,8 +215,9 @@ void trackAxis(Motor &m, float command) {
     return;
   }
   float fraction = magnitude >= TRACK_FULL_COMMAND ? 1.0f : magnitude / TRACK_FULL_COMMAND;
-  float rpm = TRACK_MIN_RPM + (TRACK_MAX_RPM - TRACK_MIN_RPM) * fraction;
-  m.stepper.setMaxSpeed(rpmToStepsPerSec(rpm));
+  float headDegPerSec =
+      TRACK_MIN_DEG_PER_S + (TRACK_MAX_DEG_PER_S - TRACK_MIN_DEG_PER_S) * fraction;
+  m.stepper.setMaxSpeed(headDegPerSec / 360.0f * STEPS_PER_REV * m.gearRatio);
   startJog(m, command < 0 ? -1 : +1);
 }
 
@@ -498,6 +500,8 @@ void setup() {
   Serial.begin(115200);
   motors[0].stepper.setPinsInverted(M1_INVERT_DIRECTION, false, false);
   motors[1].stepper.setPinsInverted(M2_INVERT_DIRECTION, false, false);
+  motors[0].gearRatio  = PAN_GEAR_RATIO;
+  motors[1].gearRatio  = TILT_GEAR_RATIO;
   motors[0].limitSteps = limitStepsFor(PAN_LIMIT_DEG, PAN_GEAR_RATIO);
   motors[1].limitSteps = limitStepsFor(TILT_LIMIT_DEG, TILT_GEAR_RATIO);
   for (Motor &m : motors) {
