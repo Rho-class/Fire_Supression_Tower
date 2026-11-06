@@ -316,6 +316,24 @@ python detect_candle_flame.py --model runs\candle_yolo\weights\best.pt --camera 
 6. If an axis is reversed, toggle `PAN_INVERT` / `TILT_INVERT` here or
    `PAN_AXIS_INVERT` / `TILT_AXIS_INVERT` in `firmware/src/main.cpp`.
 
+### C270 detector on the motors (recommended order)
+
+The C270 detector drives the motors only with `--motors`; `config.py` can stay
+in simulation. `SERIAL_PORT = "auto"` finds the ESP32 by its USB chip and never
+picks a Bluetooth port. The firmware stops each axis at a soft travel limit
+(`PAN_LIMIT_DEG`, `TILT_LIMIT_DEG` from the power-on position) and scales
+tracking speed with the correction (`TRACK_MIN_RPM`..`TRACK_MAX_RPM`).
+
+1. Flash: from `firmware/`, `pio run -t upload` (ESP32 plugged in by USB).
+2. Point the head straight ahead and level, then reset or power-cycle the ESP32;
+   that position becomes the centre for the travel limits.
+3. Bench check, no camera: `python motor_check.py`. It nudges pan left/right
+   and tilt up/down slowly and prints the position. Fix any reversed axis with
+   `M1_INVERT_DIRECTION` / `M2_INVERT_DIRECTION` in `firmware/src/main.cpp`.
+4. Track: `python detect_candle_flame_c270.py --motors`. The status bar shows
+   `MOTORS LIVE on COMx`; **Q** stops both axes. Start with the candle near the
+   centre of view and a hand near the motor power switch.
+
 ## Safety
 
 Use simulated targets for development. Keep `SIMULATION_MODE = True` until the

@@ -20,12 +20,19 @@
 //   U / D  motor 1 speed up / down     P / M  motor 2 speed up / down
 //   E      toggle pump on / off        K  pump off
 //   .      heartbeat (no action, just "the controller is still here")
-//   ?      print status
+//   Z      make the current position the centre (both motors must be stopped)
+//   ?      print status and pan/tilt position
+//
+// Travel limits: every jog stops at +/- PAN_LIMIT_DEG / TILT_LIMIT_DEG from
+// the power-on (or 'Z') position, so the head cannot be driven into its stops.
+// Power on with the head pointing straight ahead and level. "LIMIT pan/tilt
+// reached" is printed when a jog stops at a limit.
 //
 // Laptop flame tracker (newline-terminated USB / WebSocket text):
 //   PAN:<float>,TILT:<float>
 //   pan < 0 -> motor 1 left;  pan > 0 -> motor 1 right;  pan == 0 -> stop M1
 //   tilt < 0 -> motor 2 back (up); tilt > 0 -> motor 2 forward (down); 0 -> stop M2
+//   Speed scales with |pan| / |tilt| from TRACK_MIN_RPM to TRACK_MAX_RPM (over USB serial).
 //   The laptop must keep sending while tracking so JOG_TIMEOUT_MS does not stop the motors.
 //
 // Safety:
@@ -78,6 +85,28 @@ constexpr bool TILT_AXIS_INVERT = false;
 
 constexpr float PAN_TILT_EPS = 0.001f;
 
+// ---------- Travel limits and tracking speed ----------
+// Both axes have physical limits (frame / cables), so every jog (web, serial
+// letters, or laptop PAN/TILT tracking) stops at +/- the limit below, measured
+// from the position at power-on or after the 'Z' command. Power on, or press
+// 'Z', with the head pointing straight ahead and level.
+//
+// *_GEAR_RATIO = motor turns per one turn of the head. Left at 1.0, limits and
+// speeds are motor-shaft values; with a reduction gear or belt the head moves
+// LESS far and slower than these numbers (the safe direction). Set the real
+// ratio once it is known so the limits become head degrees.
+constexpr float PAN_GEAR_RATIO  = 1.0f;
+constexpr float TILT_GEAR_RATIO = 1.0f;
+constexpr float PAN_LIMIT_DEG   = 45.0f;    // each side of centre
+constexpr float TILT_LIMIT_DEG  = 20.0f;    // up and down from level
+
+// Laptop tracking speed scales with the size of the PAN/TILT correction
+// (0..TRACK_FULL_COMMAND, the laptop's MAX_PAN/TILT_COMMAND): slow near the
+// target so the head does not overshoot, faster when the flame is far off.
+constexpr float TRACK_MIN_RPM      = 2.0f;
+constexpr float TRACK_MAX_RPM      = 10.0f;
+constexpr float TRACK_FULL_COMMAND = 25.0f;
+
 // Speed presets in revolutions per minute, selected with speed up / down.
 const float SPEED_RPM[] = {15, 30, 60, 90, 120, 180, 360, 720};
 constexpr int SPEED_COUNT   = sizeof(SPEED_RPM) / sizeof(SPEED_RPM[0]);
@@ -93,6 +122,8 @@ struct Motor {
   int      direction  = 0;                  // -1, 0 stopped, +1
   uint32_t lastJogMs  = 0;
   int      speedIndex = DEFAULT_SPEED;      // each motor has its own speed
+  long     limitSteps = 0;                  // soft travel limit, +/- from zero
+  bool     limitReported = false;
   Motor(uint8_t stepPin, uint8_t dirPin) : stepper(AccelStepper::DRIVER, stepPin, dirPin) {}
 };
 
@@ -161,9 +192,55 @@ void startJog(Motor &m, int direction) {
   m.lastJogMs = millis();
   if (direction == m.direction) return;     // already moving this way
   m.direction = direction;
-  // Aim far away; stop() later decelerates from wherever we are.
-  m.stepper.moveTo(m.stepper.currentPosition() + (long)direction * 1000000000L);
+  // Aim at the soft limit in that direction; stop() decelerates sooner if the
+  // jog ends first. The motor can never be driven past +/- limitSteps.
+  m.stepper.moveTo((long)direction * m.limitSteps);
   printStatus();
+}
+
+void stopJog(Motor &m);  // defined below
+
+// Manual jog (web page, keyboard tools, serial letters): preset speed.
+void manualJog(Motor &m, int direction) {
+  applySpeed(m);
+  startJog(m, direction);
+}
+
+// Laptop tracking jog: speed proportional to the correction's size.
+void trackAxis(Motor &m, float command) {
+  float magnitude = fabsf(command);
+  if (magnitude <= PAN_TILT_EPS) {
+    stopJog(m);
+    return;
+  }
+  float fraction = magnitude >= TRACK_FULL_COMMAND ? 1.0f : magnitude / TRACK_FULL_COMMAND;
+  float rpm = TRACK_MIN_RPM + (TRACK_MAX_RPM - TRACK_MIN_RPM) * fraction;
+  m.stepper.setMaxSpeed(rpmToStepsPerSec(rpm));
+  startJog(m, command < 0 ? -1 : +1);
+}
+
+long limitStepsFor(float limitDeg, float gearRatio) {
+  return (long)(limitDeg / 360.0f * STEPS_PER_REV * gearRatio);
+}
+
+// 'Z': make the current position the centre. Only while both motors are idle.
+void zeroPositions() {
+  for (Motor &m : motors) {
+    if (m.direction != 0 || m.stepper.distanceToGo() != 0) {
+      Serial.println("ZERO refused: stop both motors first");
+      return;
+    }
+  }
+  for (Motor &m : motors) m.stepper.setCurrentPosition(0);
+  Serial.println("ZERO current position is now centre");
+}
+
+void printPositions() {
+  Serial.printf("POS pan %.1f deg (limit %.0f), tilt %.1f deg (limit %.0f)\n",
+                motors[0].stepper.currentPosition() * 360.0f / (STEPS_PER_REV * PAN_GEAR_RATIO),
+                PAN_LIMIT_DEG,
+                motors[1].stepper.currentPosition() * 360.0f / (STEPS_PER_REV * TILT_GEAR_RATIO),
+                TILT_LIMIT_DEG);
 }
 
 void stopJog(Motor &m) {
@@ -176,10 +253,11 @@ void stopJog(Motor &m) {
 void handleCommand(char c) {
   lastRxMs = millis();
   switch (c) {
-    case 'L': case 'l': startJog(motors[0], -1); break;
-    case 'R': case 'r': startJog(motors[0], +1); break;
-    case 'B': case 'b': startJog(motors[1], -1); break;
-    case 'F': case 'f': startJog(motors[1], +1); break;
+    case 'L': case 'l': manualJog(motors[0], -1); break;
+    case 'R': case 'r': manualJog(motors[0], +1); break;
+    case 'B': case 'b': manualJog(motors[1], -1); break;
+    case 'F': case 'f': manualJog(motors[1], +1); break;
+    case 'Z': case 'z': zeroPositions(); break;
     case 'X': case 'x': stopJog(motors[0]); break;
     case 'Y': case 'y': stopJog(motors[1]); break;
     case 'S': case 's': stopJog(motors[0]); stopJog(motors[1]); setPump(false); break;
@@ -189,7 +267,7 @@ void handleCommand(char c) {
     case 'D': case 'd': changeSpeed(motors[0], -1); printStatus(); break;
     case 'P': case 'p': changeSpeed(motors[1], +1); printStatus(); break;
     case 'M': case 'm': changeSpeed(motors[1], -1); printStatus(); break;
-    case '?': printStatus(); break;
+    case '?': printStatus(); printPositions(); break;
     default: break;                         // '.' heartbeat, newlines etc.
   }
 }
@@ -209,21 +287,8 @@ void handlePanTiltLine(const char *line) {
   }
 
   lastRxMs = millis();
-  if (pan < -PAN_TILT_EPS) {
-    startJog(motors[0], -1);
-  } else if (pan > PAN_TILT_EPS) {
-    startJog(motors[0], +1);
-  } else {
-    stopJog(motors[0]);
-  }
-
-  if (tilt < -PAN_TILT_EPS) {
-    startJog(motors[1], -1);               // up
-  } else if (tilt > PAN_TILT_EPS) {
-    startJog(motors[1], +1);               // down
-  } else {
-    stopJog(motors[1]);
-  }
+  trackAxis(motors[0], pan);               // < 0 left, > 0 right, 0 stop
+  trackAxis(motors[1], tilt);              // < 0 up (back), > 0 down (forward)
 }
 
 bool looksLikePanTilt(const char *text, size_t len) {
@@ -433,6 +498,8 @@ void setup() {
   Serial.begin(115200);
   motors[0].stepper.setPinsInverted(M1_INVERT_DIRECTION, false, false);
   motors[1].stepper.setPinsInverted(M2_INVERT_DIRECTION, false, false);
+  motors[0].limitSteps = limitStepsFor(PAN_LIMIT_DEG, PAN_GEAR_RATIO);
+  motors[1].limitSteps = limitStepsFor(TILT_LIMIT_DEG, TILT_GEAR_RATIO);
   for (Motor &m : motors) {
     m.stepper.setMinPulseWidth(2);          // microseconds; TMC2208 needs ~0.1
     m.stepper.setAcceleration(ACCEL_STEPS_PER_S2);
@@ -465,8 +532,14 @@ void loop() {
   uint32_t now = millis();
   if (pumpOn && now - lastRxMs > PUMP_TIMEOUT_MS) setPump(false);
 
-  for (Motor &m : motors) {
+  for (int i = 0; i < 2; i++) {
+    Motor &m = motors[i];
     if (m.direction != 0 && now - m.lastJogMs > JOG_TIMEOUT_MS) stopJog(m);
     m.stepper.run();                        // must run as often as possible
+    bool atLimit = m.direction != 0 && m.stepper.distanceToGo() == 0;
+    if (atLimit && !m.limitReported) {
+      Serial.printf("LIMIT %s reached\n", i == 0 ? "pan" : "tilt");
+    }
+    m.limitReported = atLimit;
   }
 }

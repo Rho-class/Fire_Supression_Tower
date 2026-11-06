@@ -47,7 +47,7 @@ from detect_candle_flame import (
     safe_stop_motors,
     save_calibration_frame,
 )
-from motor_interface import send_motor_command
+from motor_interface import close_serial, connect, read_messages, send_motor_command
 from target_tracking import ProportionalFlameTracker, TrackingState
 from two_stage_detector import (
     CandidateSettings,
@@ -391,6 +391,14 @@ def run(args: argparse.Namespace) -> FlameDetection:
             min_aspect=args.spot_min_aspect,
         ),
     )
+    simulate = not args.motors
+    motor_label = "SIMULATION (no motors)"
+    if args.motors:
+        port = connect(args.port)
+        motor_label = f"MOTORS LIVE on {port}"
+        print(f"ESP32 connected on {port}: motors will follow the flame. Q stops them.",
+              flush=True)
+    last_motor_message = ""
     camera = open_c270(args.camera, args.width, args.height, args.fps, args.exposure)
     exposure = args.exposure
     height, width = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -449,10 +457,17 @@ def run(args: argparse.Namespace) -> FlameDetection:
             }
             latest = result
             log.add(result, ignore_mask is not None, detection, tracking)
+            # Sent every frame: the firmware stops a motor if commands stop
+            # arriving for 500 ms, so a frozen laptop cannot leave it running.
             send_motor_command(
                 tracking.pan_correction, tracking.tilt_correction,
-                simulation_mode=SIMULATION_MODE, log_simulation=False,
+                simulation_mode=simulate, log_simulation=False,
             )
+            if not simulate:
+                for message in read_messages():
+                    if message.startswith(("LIMIT", "ZERO")):
+                        print(f"ESP32: {message}", flush=True)
+                        last_motor_message = message
 
             now = time.perf_counter()
             fps = 1.0 / max(now - previous, 1e-4)
@@ -464,6 +479,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
                 status = f"FLAME CANDIDATE {tracking.confirmation_count}/{CONFIRMATION_FRAMES}"
             else:
                 status = "SCANNING"
+            status += f"   [{motor_label}]" + (f" {last_motor_message}" if last_motor_message else "")
             info = (
                 f"exp {exposure:g}  FPS {smoothed_fps:.1f}  warm spots {len(detection.candidates)}  "
                 f"stage1 {detection.stage1_ms:.0f} ms  yolo {detection.stage2_ms:.0f} ms  "
@@ -510,7 +526,17 @@ def run(args: argparse.Namespace) -> FlameDetection:
             elif key in (ord("c"), ord("C")):
                 save_calibration_frame(frame, "c270")
     finally:
-        safe_stop_motors()
+        if simulate:
+            safe_stop_motors()
+        else:
+            try:  # stop both axes explicitly, then close the link
+                for _ in range(3):
+                    send_motor_command(0.0, 0.0, simulation_mode=False, log_simulation=False)
+                print("Motors stopped.", flush=True)
+            except Exception as exc:
+                print(f"Motor stop warning: {exc} (firmware stops them within 0.5 s)")
+            finally:
+                close_serial()
         camera.release()
         cv2.destroyAllWindows()
         lines = log.summary()
@@ -528,6 +554,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--camera", type=int, default=1)
+    parser.add_argument(
+        "--motors",
+        action="store_true",
+        help="Drive the real pan/tilt motors through the ESP32 over USB serial. "
+        "Without it the detector only simulates. Power on the ESP32 with the head "
+        "pointing straight ahead (that position is the centre for its travel limits).",
+    )
+    parser.add_argument(
+        "--port",
+        default=None,
+        help="ESP32 COM port (default: config.SERIAL_PORT, 'auto' finds the ESP32 by USB chip).",
+    )
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=30)

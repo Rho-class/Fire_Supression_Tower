@@ -8,8 +8,10 @@ serial as newline-terminated PAN:/TILT: lines (see firmware/src/main.cpp).
 TRACKING_ENABLED = True
 SIMULATION_MODE = True
 
-# USB serial to the ESP32 when SIMULATION_MODE is False (Device Manager COM port).
-SERIAL_PORT = "COM3"
+# USB serial to the ESP32 when SIMULATION_MODE is False. "auto" finds the ESP32
+# by its USB chip and never picks a Bluetooth port; or set a port such as "COM5"
+# (Device Manager > Ports). On the dev laptop COM3/COM4 are Bluetooth links.
+SERIAL_PORT = "auto"
 SERIAL_BAUD = 115200
 
 DEADZONE_X = 40.0
