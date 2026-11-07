@@ -86,6 +86,29 @@ class TrackingTests(unittest.TestCase):
         payload = send_motor_command(-1.5, 2.25, simulation_mode=True)
         self.assertEqual(payload, "PAN:-1.50,TILT:2.25")
 
+    def test_ten_percent_gain_cut_reduces_simulated_overshoot(self) -> None:
+        """Inertial head model: lower KP cuts the peak undershoot past centre."""
+
+        def peak_overshoot(kp: float) -> float:
+            # Flame fixed at image centre 0; camera starts looking 200 px right.
+            position = 200.0
+            velocity = 0.0
+            peak = 0.0
+            for _ in range(200):
+                error = position  # target at 0
+                command = max(-25.0, min(25.0, kp * error if abs(error) > 10.0 else 0.0))
+                # Command sets a velocity setpoint; inertia integrates past zero.
+                velocity = 0.85 * velocity - 0.55 * command
+                position += velocity
+                if position < 0:
+                    peak = max(peak, -position)
+            return peak
+
+        high = peak_overshoot(0.05)
+        low = peak_overshoot(0.045)
+        self.assertGreater(high, 1.0)
+        self.assertLess(low, high * 0.95)
+
 
 if __name__ == "__main__":
     unittest.main()

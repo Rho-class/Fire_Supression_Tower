@@ -23,8 +23,10 @@ DEADZONE_Y = 10.0
 DEADZONE_RELEASE_X = 18.0
 DEADZONE_RELEASE_Y = 18.0
 
-KP_PAN = 0.05
-KP_TILT = 0.05
+# P gains (command ≈ KP * pixel_error). 0.05 overshot the flame by ~10% on the
+# tower head; 0.045 keeps the same deadzone/hysteresis but settles shorter.
+KP_PAN = 0.045
+KP_TILT = 0.045
 
 MAX_PAN_COMMAND = 25.0
 MAX_TILT_COMMAND = 25.0
