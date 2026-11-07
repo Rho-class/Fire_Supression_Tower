@@ -100,6 +100,23 @@ PAN:<float>,TILT:<float>
 On the laptop set `SERIAL_PORT` and `SIMULATION_MODE = False` in
 `computer-vision/fire-detection/config.py`, then run `detect_candle_flame.py`.
 
+### Levelling the head (hose sag)
+
+The ESP32 calls whatever tilt it starts at "level" (0°), and it restarts every
+time the laptop opens the USB port. While the 12 V is off the hose pulls the
+head down about 27° of tilt-motor travel (measured), so:
+
+- **After turning the 12 V on**, press **L** in the detector window. The
+  firmware (`H` command) raises the tilt `TILT_LEVEL_OFFSET_DEG` (27°) and calls
+  that level.
+- If it is still slightly off, **I / K** trim the tilt up / down 1°
+  (`^` / `v`). Level moves with each trim, so wherever you stop is level; no
+  **Z** needed.
+- On **Q** the detector sends `C`, which drives both axes back to 0, so the
+  next run (which re-zeroes on connect) starts level without pressing L again.
+
+The levelling keys only work while no flame is being tracked.
+
 ### Manual Wi-Fi jog
 
 With `OWN_NETWORK = true`, join Wi-Fi `StepperControl` and open

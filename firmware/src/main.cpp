@@ -21,6 +21,12 @@
 //   E      toggle pump on / off        K  pump off
 //   .      heartbeat (no action, just "the controller is still here")
 //   Z      make the current position the centre (both motors must be stopped)
+//   H      level the head after motor power-up: tilt forward TILT_LEVEL_OFFSET_DEG
+//          (the hose pulls it back while the motors are off), then make that tilt 0
+//   ^ / v  trim level: tilt up / down TILT_NUDGE_DEG and move "level" with it
+//          (the head's new position is level at once; no Z needed)
+//   C      drive both axes back to centre (0); the laptop sends it on quit so
+//          the next run, which resets the ESP32 and re-zeroes, starts level
 //   ?      print status and pan/tilt position
 //
 // Travel limits: every jog stops at +/- PAN_LIMIT_DEG / TILT_LIMIT_DEG from
@@ -99,11 +105,21 @@ constexpr float TILT_GEAR_RATIO = 5.0f;     // ~5:1 - motor turns ~5x per head t
 constexpr float PAN_LIMIT_DEG   = 45.0f;    // each side of centre
 constexpr float TILT_LIMIT_DEG  = 20.0f;    // up and down from level
 
+// The hose pulls the head down about this far while the motors are unpowered
+// (levelling took 27 deg of positive tilt steps, which raise the camera).
+// 'H' drives the tilt by this much in the positive ('F') direction and calls
+// it level.
+// Measured 2026-11-06 (session_20261106_181654): levelling from the sagged
+// power-up position took 27 one-degree trims up (31 up, 4 down).
+constexpr float TILT_LEVEL_OFFSET_DEG = 27.0f;
+constexpr float TILT_NUDGE_DEG        = 1.0f;   // '^' / 'v' trim step
+
 // Laptop tracking speed (head degrees per second) scales with the size of the
 // PAN/TILT correction (0..TRACK_FULL_COMMAND, the laptop's MAX_PAN/TILT_COMMAND):
-// slow near the target so the head does not overshoot the 40 px (~1.5 deg on
-// the C270) dead zone, faster when the flame is far off-centre.
-constexpr float TRACK_MIN_DEG_PER_S = 3.0f;
+// slow near the target so the head does not overshoot the laptop's 10 px
+// (~0.5 deg on the C270) dead zone, faster when the flame is far off-centre.
+// At 1 deg/s and ~0.1 s camera-to-motor delay the head coasts ~2 px past.
+constexpr float TRACK_MIN_DEG_PER_S = 1.0f;
 constexpr float TRACK_MAX_DEG_PER_S = 25.0f;
 constexpr float TRACK_FULL_COMMAND  = 25.0f;
 
@@ -112,7 +128,10 @@ const float SPEED_RPM[] = {15, 30, 60, 90, 120, 180, 360, 720};
 constexpr int SPEED_COUNT   = sizeof(SPEED_RPM) / sizeof(SPEED_RPM[0]);
 constexpr int DEFAULT_SPEED = 2;            // 60 RPM
 
-constexpr float ACCEL_STEPS_PER_S2 = 30000;  // smooth start / stop
+// Was 30000: starts / stops were near-instant and jolted the head, camera and
+// hose, shaking the image while it corrected. 6000 reaches tracking speed in
+// ~0.15 s; near the target tracking is slow, so stops still land within a step.
+constexpr float ACCEL_STEPS_PER_S2 = 6000;
 constexpr uint32_t JOG_TIMEOUT_MS  = 500;   // stop a motor if no jog command for this long
 constexpr uint32_t PUMP_TIMEOUT_MS = 1500;  // pump off if the controller goes quiet
 
@@ -131,6 +150,9 @@ struct Motor {
 Motor motors[2] = {Motor(M1_STEP_PIN, M1_DIR_PIN), Motor(M2_STEP_PIN, M2_DIR_PIN)};
 bool     pumpOn   = false;
 uint32_t lastRxMs = 0;                      // time of the last command from anywhere
+bool     levelPending  = false;             // 'H' move running; zero tilt when it ends
+bool     centrePending = false;             // 'C' move running; report when both arrive
+long     trimSteps     = 0;                 // '^' / 'v' moves still to fold into tilt zero
 
 // Commands from Wi-Fi (core 0) are handed to the motor loop (core 1) through this queue.
 QueueHandle_t commandQueue;
@@ -192,6 +214,10 @@ void setPump(bool on) {
 void startJog(Motor &m, int direction) {
   m.lastJogMs = millis();
   if (direction == m.direction) return;     // already moving this way
+  if (levelPending || centrePending) {      // a jog overrides a positioning move
+    levelPending = centrePending = false;
+    Serial.println("MOVE cancelled by jog");
+  }
   m.direction = direction;
   // Aim at the soft limit in that direction; stop() decelerates sooner if the
   // jog ends first. The motor can never be driven past +/- limitSteps.
@@ -207,8 +233,14 @@ void manualJog(Motor &m, int direction) {
   startJog(m, direction);
 }
 
+// A level / nudge / centre move: running, but not a jog (direction stays 0).
+bool positioning(Motor &m) {
+  return m.direction == 0 && m.stepper.distanceToGo() != 0;
+}
+
 // Laptop tracking jog: speed proportional to the correction's size.
 void trackAxis(Motor &m, float command) {
+  if (positioning(m)) return;               // let level / nudge / centre finish
   float magnitude = fabsf(command);
   if (magnitude <= PAN_TILT_EPS) {
     stopJog(m);
@@ -252,6 +284,88 @@ void stopJog(Motor &m) {
   printStatus();
 }
 
+// 'S': stop everything, including level / nudge / centre moves.
+void stopAll() {
+  for (Motor &m : motors) {
+    stopJog(m);
+    m.stepper.stop();
+  }
+  levelPending = centrePending = false;
+  trimSteps = 0;  // an interrupted trim is not applied
+}
+
+long tiltSteps(float headDeg) {
+  return lroundf(headDeg / 360.0f * STEPS_PER_REV * TILT_GEAR_RATIO);
+}
+
+bool bothIdle() {
+  for (Motor &m : motors) {
+    if (m.direction != 0 || m.stepper.distanceToGo() != 0) return false;
+  }
+  return true;
+}
+
+// 'H': undo the hose sag, then call the result level. Tilt only.
+void levelHead() {
+  if (!bothIdle()) {
+    Serial.println("LEVEL refused: stop both motors first");
+    return;
+  }
+  Motor &tilt = motors[1];
+  applySpeed(tilt);
+  tilt.stepper.setCurrentPosition(0);
+  tilt.stepper.moveTo(tiltSteps(TILT_LEVEL_OFFSET_DEG));
+  levelPending = true;
+  Serial.printf("LEVEL moving tilt %+.1f deg\n", TILT_LEVEL_OFFSET_DEG);
+}
+
+// '^' / 'v': trim level. Moves the tilt one step and shifts "level" by the
+// same amount once the move ends, so the head's position relative to level
+// is unchanged: nudge until it looks level and it already is.
+void nudgeTilt(int direction) {
+  Motor &tilt = motors[1];
+  if (tilt.direction != 0 || levelPending || centrePending) {
+    Serial.println("NUDGE refused: tilt is moving");
+    return;
+  }
+  long step = direction * tiltSteps(TILT_NUDGE_DEG);
+  applySpeed(tilt);
+  tilt.stepper.moveTo(tilt.stepper.targetPosition() + step);
+  trimSteps += step;
+  Serial.printf("NUDGE tilt %s (level moves with it)\n", direction > 0 ? "up" : "down");
+}
+
+// 'C': drive both axes back to 0 (straight ahead and level).
+void centreHead() {
+  for (Motor &m : motors) {
+    stopJog(m);
+    applySpeed(m);
+    m.stepper.moveTo(0);
+  }
+  levelPending = false;
+  centrePending = true;
+  Serial.println("CENTRE moving");
+}
+
+// Called every loop: finish level / trim / centre moves once the motors arrive.
+void finishPositioning() {
+  Motor &tilt = motors[1];
+  if (trimSteps != 0 && tilt.direction == 0 && tilt.stepper.distanceToGo() == 0) {
+    tilt.stepper.setCurrentPosition(tilt.stepper.currentPosition() - trimSteps);
+    trimSteps = 0;
+    Serial.println("LEVEL trimmed: this tilt is level");
+  }
+  if (levelPending && motors[1].direction == 0 && motors[1].stepper.distanceToGo() == 0) {
+    levelPending = false;
+    motors[1].stepper.setCurrentPosition(0);
+    Serial.println("LEVEL done: tilt is now 0");
+  }
+  if (centrePending && bothIdle()) {
+    centrePending = false;
+    Serial.println("CENTRED");
+  }
+}
+
 void handleCommand(char c) {
   lastRxMs = millis();
   switch (c) {
@@ -262,7 +376,12 @@ void handleCommand(char c) {
     case 'Z': case 'z': zeroPositions(); break;
     case 'X': case 'x': stopJog(motors[0]); break;
     case 'Y': case 'y': stopJog(motors[1]); break;
-    case 'S': case 's': stopJog(motors[0]); stopJog(motors[1]); setPump(false); break;
+    case 'S': case 's': stopAll(); setPump(false); break;
+    case 'H': case 'h': levelHead(); break;
+    // Checked on the tower 2026-11-06: positive tilt steps raise the camera.
+    case '^':           nudgeTilt(+1); break;   // camera up
+    case 'v': case 'V': nudgeTilt(-1); break;   // camera down
+    case 'C': case 'c': centreHead(); break;
     case 'E': case 'e': setPump(!pumpOn); break;
     case 'K': case 'k': setPump(false); break;
     case 'U': case 'u': changeSpeed(motors[0], +1); printStatus(); break;
@@ -535,6 +654,7 @@ void loop() {
 
   uint32_t now = millis();
   if (pumpOn && now - lastRxMs > PUMP_TIMEOUT_MS) setPump(false);
+  finishPositioning();
 
   for (int i = 0; i < 2; i++) {
     Motor &m = motors[i];
