@@ -21,7 +21,7 @@ Do not go shorter than about -7 under mains-powered lights: below ~1/120 s the
 lights' 120 Hz flicker shows as horizontal bands and the flame is lost.
 
 Optional keys (none are required for detection):
-       SPACE  auto-fire on / off (it locks 1 s, then sprays up/down; off = pump off now)
+       SPACE  auto-fire on / off (it locks 1 s, then sprays rows; off = pump off now)
        O  switch INDOOR / OUTDOOR mode    A  outdoor auto exposure on / off
        P  search sweep on / off: with nothing in view for 3 s the pan sweeps
           +/- 45 deg until a flame appears (on by default with --motors)
@@ -52,7 +52,7 @@ from config import (
     AIM_LEFT_DEG, CONFIRMATION_FRAMES, HOME_AFTER_LOST_S, NOZZLE_SPEED_MPS,
     PAN_INVERT, SWEEP_AFTER_HOME_S,
     PATROL_ENABLED, SIMULATION_MODE, TILT_INVERT,
-    AUTOFIRE_DEFAULT_DISTANCE_FT, STARTUP_TILT_DOWN_DEG,
+    STARTUP_TILT_DOWN_DEG,
 )
 from detect_candle_flame import (
     FlameDetection,
@@ -574,7 +574,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
     home = None if simulate else HomeReturn()  # head back level once a flame is out
     distance_estimator = DistanceEstimator()  # flame distance from its size (aim.py)
     distance_ft: float | None = None
-    # Autonomous firing (autofire.py): lock 1 s, sweep the water up/down, check, repeat.
+    # Autonomous firing (autofire.py): lock 1 s, spray rows climbing slowly, check, repeat.
     # SPACE arms / disarms it. Needs the real pump (--motors).
     autofire = AutoFire(armed=not simulate)
     last_pump_request = 0.0
@@ -678,12 +678,9 @@ def run(args: argparse.Namespace) -> FlameDetection:
                     aim_deg = launch_angle_deg(distance_ft * FT, NOZZLE_SPEED_MPS)
                     if aim_deg is None:
                         aim_note = "OUT OF RANGE"
-            # Water-arc angle for the aim point; without a size estimate,
-            # assume the middle of the 5-10 ft range.
-            aim_up_deg = aim_deg
-            if aim_up_deg is None and NOZZLE_SPEED_MPS is not None:
-                aim_up_deg = launch_angle_deg(AUTOFIRE_DEFAULT_DISTANCE_FT * FT, NOZZLE_SPEED_MPS)
-            aim_up_deg = aim_up_deg or 0.0
+            # The row spray starts at the flame's height and climbs on its own,
+            # so it needs no distance estimate (aim_deg is shown for reference).
+            aim_up_deg = 0.0
             log.distance_ft = round(distance_ft, 2) if distance_ft is not None else ""
             log.aim_deg = (round(autofire.spiral.tilt.position, 2)
                            if autofire.spiral is not None else "")

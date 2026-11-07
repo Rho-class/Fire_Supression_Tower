@@ -4,7 +4,7 @@ import math
 import unittest
 
 from aim import (
-    FT, G, DistanceEstimator, UpDownSweep, command_for_speed, aim_offset_px, estimate_distance_ft, launch_angle_deg,
+    FT, G, DistanceEstimator, RowSweep, command_for_speed, aim_offset_px, estimate_distance_ft, launch_angle_deg,
     max_range_m, nozzle_speed_from_level_shot,
 )
 
@@ -53,19 +53,24 @@ class FireSweepTests(unittest.TestCase):
         self.assertAlmostEqual(command_for_speed(25.0), 25.0)
         self.assertAlmostEqual(command_for_speed(13.0), 12.5)
 
-    def test_aims_then_sweeps_up_and_down_then_returns(self) -> None:
-        sp = UpDownSweep(up_deg=8.0, left_deg=2.0, half_range_deg=4.0, speed_deg_s=8.0,
-                         passes=3)
-        trace = run_pattern(sp)
+    def test_rows_start_at_flame_height_then_climb_slowly(self) -> None:
+        sp = RowSweep(left_deg=2.0, pan_half_deg=3.0, pan_speed_deg_s=12.0,
+                      first_row_legs=2, rise_deg_s=0.75, max_up_deg=6.0)
+        trace = run_pattern(sp, seconds=30.0)
         self.assertTrue(sp.done)
-        spraying = [(l, u) for _, l, u, pump in trace if pump]
-        self.assertGreater(len(spraying), 80)  # ~3 s of pump at 30 fps
-        ups = [u for _, u in spraying]
-        self.assertLess(min(ups), 4.8)      # reaches the bottom (8 - 4)
-        self.assertGreater(max(ups), 11.2)  # and the top (8 + 4)
-        self.assertTrue(all(abs(l - 2.0) < 0.8 for l, _ in spraying))  # pan held
-        turns = sum(1 for a, b, c in zip(ups, ups[1:], ups[2:]) if (b - a) * (c - b) < 0)
-        self.assertGreaterEqual(turns, 2)  # up, down, up
+        spraying = [(t, l, u) for t, l, u, pump in trace if pump]
+        t0 = spraying[0][0]
+        first_row = [(l, u) for t, l, u in spraying if t - t0 < 0.9]
+        self.assertTrue(all(abs(u) < 0.5 for _, u in first_row))  # flame height
+        self.assertLess(min(l for l, _ in first_row), 2.0 - 2.5)  # swings both ways
+        self.assertGreater(max(l for l, _ in first_row), 2.0 + 2.5)
+        ups = [u for _, _, u in spraying]
+        self.assertGreater(max(ups), 5.5)  # climbed to the top
+        # slow: no faster than ~1 deg/s on average while climbing
+        climb = [(t, u) for t, _, u in spraying if 0.5 < u < 5.5]
+        rate = (climb[-1][1] - climb[0][1]) / (climb[-1][0] - climb[0][0])
+        self.assertLess(rate, 1.1)
+        self.assertAlmostEqual(spraying[-1][0] - t0, sp.duration, delta=0.3)
         _, left, up, pump = trace[-1]
         self.assertFalse(pump)
         self.assertLess(abs(left) + abs(up), 1.5)  # back on the flame line

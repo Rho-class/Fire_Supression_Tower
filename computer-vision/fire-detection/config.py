@@ -77,19 +77,21 @@ AIM_MAX_OFFSET_PX = 300.0
 AIM_LEFT_DEG = 2.0
 
 # Autonomous firing (autofire.py): once the flame is CENTERED on the crosshair
-# for AUTOFIRE_LOCK_S, the head moves to the aim point (water-arc angle up,
-# AIM_LEFT_DEG left) and the pump sprays one burst: the tilt sweeps up and down
-# +/- FIRE_SWEEP_HALF_DEG through the aim point at FIRE_SWEEP_SPEED_DEG_S for
-# FIRE_SWEEP_PASSES legs (up, down, up), no self-correcting. Pump off, back on
-# the flame, AUTOFIRE_CHECK_S to look again; if it still burns it locks and
-# fires again. Without a distance estimate the arc is worked out for
-# AUTOFIRE_DEFAULT_DISTANCE_FT (middle of 5-10 ft).
+# for AUTOFIRE_LOCK_S, the pump sprays in rows (aim.RowSweep), no
+# self-correcting: the pan swings +/- FIRE_PAN_HALF_DEG around a point
+# AIM_LEFT_DEG left of the flame at FIRE_PAN_SPEED_DEG_S. The first
+# FIRE_FIRST_ROW_LEGS swings are at the flame's own height (the row it was
+# aligned on), then the tilt creeps up at FIRE_RISE_DEG_S (very slowly) to
+# FIRE_MAX_UP_DEG while the swings continue, covering farther flames. Pump off,
+# back on the flame, AUTOFIRE_CHECK_S to look again; fires again if still lit.
+# 10.5 deg up is the water arc for 10 ft (nozzle 9.17 m/s).
 AUTOFIRE_LOCK_S = 1.0
 AUTOFIRE_CHECK_S = 1.0
-AUTOFIRE_DEFAULT_DISTANCE_FT = 7.5
-FIRE_SWEEP_HALF_DEG = 4.0     # covers ~5-10 ft around a 7.5 ft guess
-FIRE_SWEEP_SPEED_DEG_S = 8.0  # one 8 deg leg per second
-FIRE_SWEEP_PASSES = 3         # up, down, up = 3 s of pump per burst
+FIRE_PAN_HALF_DEG = 3.0      # ~4 in each side of the flame at 6 ft
+FIRE_PAN_SPEED_DEG_S = 12.0  # one 6 deg swing every 0.5 s
+FIRE_FIRST_ROW_LEGS = 2      # one swing across and back at the flame height
+FIRE_RISE_DEG_S = 0.75       # very slow climb: ~0.4 deg higher per swing
+FIRE_MAX_UP_DEG = 10.5       # top of the climb (10 ft arc); ~15 s of pump per burst
 
 # Water budget: half a gallon for five trials. PUMP_FLOW_ML_S is an ESTIMATE
 # until measured: run the pump 10 s into a measuring cup and divide mL by 10.

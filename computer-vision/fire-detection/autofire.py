@@ -2,9 +2,10 @@
 
     WATCH  -> the tracker centres the flame on the crosshair (CENTERED)
     LOCK   -> held CENTERED for LOCK_S (any drift restarts the wait)
-    FIRE   -> move to the aim point (water-arc angle up, AIM_LEFT_DEG left) and
-              sweep the tilt up and down through it with the pump ON;
-              no self-correcting while spraying (aim.UpDownSweep, open loop)
+    FIRE   -> pump ON, spray in rows (aim.RowSweep): the pan swings left and
+              right across the flame, first at the flame's height, then the
+              tilt creeps up very slowly to cover a farther flame; no
+              self-correcting while spraying (open loop)
     CHECK  -> pump OFF, back on the flame line, CHECK_S for the view to clear,
               then WATCH again: a flame still there is re-centred and fired at.
 
@@ -16,11 +17,17 @@ the head to return home (call new_trial()).
 
 from __future__ import annotations
 
-from aim import UpDownSweep
+from aim import RowSweep
 from config import (
-    AUTOFIRE_CHECK_S, AUTOFIRE_LOCK_S, FIRE_SWEEP_HALF_DEG, FIRE_SWEEP_PASSES,
-    FIRE_SWEEP_SPEED_DEG_S, PUMP_FLOW_ML_S, RESERVOIR_ML, TRIALS,
+    AUTOFIRE_CHECK_S, AUTOFIRE_LOCK_S, FIRE_FIRST_ROW_LEGS, FIRE_MAX_UP_DEG,
+    FIRE_PAN_HALF_DEG, FIRE_PAN_SPEED_DEG_S, FIRE_RISE_DEG_S, PUMP_FLOW_ML_S,
+    RESERVOIR_ML, TRIALS,
 )
+
+
+def make_row_sweep(left_deg: float) -> RowSweep:
+    return RowSweep(left_deg, FIRE_PAN_HALF_DEG, FIRE_PAN_SPEED_DEG_S,
+                    FIRE_FIRST_ROW_LEGS, FIRE_RISE_DEG_S, FIRE_MAX_UP_DEG)
 from target_tracking import TrackingState
 
 
@@ -35,7 +42,7 @@ class AutoFire:
         self.budget_ml = budget_ml
         self.state = "WATCH"
         self.since = 0.0
-        self.spiral: UpDownSweep | None = None  # the burst being fired
+        self.spiral: RowSweep | None = None  # the burst being fired
         self.trial_ml = 0.0  # water used this trial
         self.total_ml = 0.0  # water used this run
         self.bursts = 0  # bursts fired this trial
@@ -44,13 +51,12 @@ class AutoFire:
     # -- water -------------------------------------------------------------
     @property
     def burst_ml(self) -> float:
-        sweep_s = 2 * FIRE_SWEEP_HALF_DEG / FIRE_SWEEP_SPEED_DEG_S * FIRE_SWEEP_PASSES
-        return sweep_s * self.flow_ml_s
+        return make_row_sweep(0.0).duration * self.flow_ml_s
 
     @property
     def out_of_water(self) -> bool:
-        """True if one more burst would go over this trial's share."""
-        return self.trial_ml + self.burst_ml > self.budget_ml + 1e-6
+        """True once this trial's share is used (a burst already started finishes)."""
+        return self.trial_ml >= self.budget_ml - 1e-6
 
     def new_trial(self) -> None:
         self.trial_ml, self.bursts = 0.0, 0
@@ -85,8 +91,7 @@ class AutoFire:
             if now - self.since < self.lock_s:
                 return None, False
             self.state, self.since = "FIRE", now
-            self.spiral = UpDownSweep(aim_up_deg, aim_left_deg, FIRE_SWEEP_HALF_DEG,
-                                      FIRE_SWEEP_SPEED_DEG_S, FIRE_SWEEP_PASSES)
+            self.spiral = make_row_sweep(aim_left_deg)
             self.bursts += 1
 
         if self.state == "FIRE":
@@ -116,7 +121,7 @@ class AutoFire:
             return f"AUTO-FIRE OFF (SPACE = on)  {water}"
         if self.state == "FIRE" and self.spiral is not None:
             what = "aiming" if self.spiral.phase == "approach" else (
-                "SPRAYING up/down" if self.spiral.phase == "sweep" else "back to flame")
+                "SPRAYING rows" if self.spiral.phase == "sweep" else "back to flame")
             return f"FIRE #{self.bursts}: {what}  {water}"
         if self.state == "LOCK":
             return f"LOCKED - firing in {max(self.lock_s - (self.last_now or 0) + self.since, 0):.1f} s  {water}"

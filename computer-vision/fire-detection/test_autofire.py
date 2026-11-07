@@ -13,21 +13,21 @@ class AutoFireTests(unittest.TestCase):
         return af.update(t, state, 8.0, 2.0)
 
     def test_locks_one_second_then_fires_then_checks(self) -> None:
-        af = AutoFire(lock_s=1.0, check_s=1.0, flow_ml_s=25.0, budget_ml=400.0)
+        af = AutoFire(lock_s=1.0, check_s=1.0, flow_ml_s=25.0, budget_ml=1000.0)
         self.assertEqual(self.step(af, 0.0), (None, False))  # -> LOCK
         self.assertEqual(af.state, "LOCK")
         self.assertEqual(self.step(af, 0.9), (None, False))
         self.step(af, 1.0)  # held CENTERED 1 s: fire
         self.assertEqual(af.state, "FIRE")
         t, pumped, seen_fire = 1.033, 0, False
-        while t < 20 and af.state != "CHECK":
+        while t < 40 and af.state != "CHECK":
             cmd, pump = self.step(af, t, N)  # flame hidden by spray: no effect
             seen_fire |= af.state == "FIRE"
             pumped += pump
             t += 0.033
         self.assertTrue(seen_fire)
-        self.assertGreater(pumped, 60)
-        self.assertAlmostEqual(af.trial_ml, 75.0, delta=6.0)  # ~3 s x 25 mL/s
+        self.assertGreater(pumped, 300)  # ~15 s of rows at 30 fps
+        self.assertAlmostEqual(af.trial_ml, af.burst_ml, delta=10.0)
         self.assertEqual(self.step(af, t + 0.5, N), ((0.0, 0.0), False))  # holding
         self.step(af, t + 1.1, N)
         self.assertEqual(af.state, "WATCH")  # looks again; fires again if still lit
@@ -42,8 +42,8 @@ class AutoFireTests(unittest.TestCase):
         self.assertEqual(af.state, "LOCK")  # needs a full second again
 
     def test_stops_firing_when_trial_share_used(self) -> None:
-        af = AutoFire(flow_ml_s=25.0, budget_ml=100.0)  # room for one 75 mL burst
-        af.trial_ml = 50.0
+        af = AutoFire(flow_ml_s=25.0, budget_ml=400.0)
+        af.trial_ml = 400.0  # this trial's share is used up
         self.step(af, 0.0)
         self.assertEqual(af.state, "WATCH")
         self.assertIn("USED", af.status())

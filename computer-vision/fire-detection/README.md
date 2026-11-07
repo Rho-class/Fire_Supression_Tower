@@ -164,14 +164,14 @@ The overlay shows `~D ft (set | size est.)  aim +X deg` and a magenta
    the tagged sessions; typically within ~0-2.5 ft) clamped to 5-10 ft, so the
    aim never goes beyond 5.1-10.4°. Candle size varies, so set it when you can.
 3. **Autonomous firing** (`autofire.py`, SPACE arms / disarms): when the flame
-   has been CENTERED on the crosshair for 1 s, the head moves to the aim point
-   (the arc angle up, `AIM_LEFT_DEG` left; 7.5 ft assumed without a size
-   estimate) and the pump sprays one burst: the tilt sweeps up and down ±4°
-   through the aim point (up, down, up: 3 s), with no self-correcting. Then pump off, back onto the flame, 1 s to
-   look again; if it still burns it re-centres, locks and fires again.
-   Water: each burst is counted against a per-trial share (half a gallon / 5
-   trials = 378 mL at `PUMP_FLOW_ML_S`, an estimate until measured); once used
-   it stops firing until the flame is out and the head has gone home.
+   has been CENTERED on the crosshair for 1 s, the pump sprays in rows with no
+   self-correcting: the pan swings ±3° across the flame (centred `AIM_LEFT_DEG`
+   left), first at the flame's own height, then the tilt creeps up at 0.75°/s
+   to 10.5° (the 10 ft water arc) while the swings continue, so a farther flame
+   is covered. Then pump off, back onto the flame, 1 s to look again; if it
+   still burns it re-centres, locks and fires again. Water: each burst (~15 s)
+   is counted against a per-trial share (half a gallon / 5 trials = 378 mL at
+   `PUMP_FLOW_ML_S`, an estimate until measured).
 
 Assumes the nozzle sits at the camera and the flame is about level with it.
 

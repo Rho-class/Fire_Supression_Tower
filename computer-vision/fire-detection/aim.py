@@ -115,35 +115,46 @@ class _AxisDrive:
         return self.sign * direction * command_for_speed(v)
 
 
-class UpDownSweep:
-    """Water pattern: from the locked flame, move to the bottom of the sweep,
-    then with the pump on tilt up and down through the aim point.
+class RowSweep:
+    """Sprinkler pattern in rows: start ON the flame line, swing the pan left
+    and right across the flame, then creep the tilt up very slowly while the
+    swings continue, so a farther flame (which needs a higher arc) is covered.
 
-    The aim point is `up_deg` above the flame line (the water-arc angle) and
-    `left_deg` left of it; the tilt sweeps +/- half_range_deg around it at
-    speed_deg_s for `passes` legs (up, down, up, ...). Open loop from where the
-    tracker left the head (centred on the flame): no self-correcting while
-    spraying. Coordinates: up + = higher, left + = left. Firmware commands:
-    + pan turns the camera left, + tilt lowers it.
+    From where the tracker left the head (centred on the flame):
+      approach -> to the start of the first row (flame height, one side)
+      sweep    -> pump ON: pan swings +/- pan_half_deg around left_deg at
+                  pan_speed_deg_s; the first first_row_legs swings stay at the
+                  flame height, then the tilt rises at rise_deg_s up to max_up_deg
+      return   -> pump OFF, back onto the flame line so the camera can check it
+    Open loop (the spray hides the flame), no self-correcting. Coordinates:
+    up + = higher, left + = left. Firmware: + pan = camera left, + tilt = down.
     """
 
     APPROACH_DEG_S = 10.0
     GAIN = 3.0  # pulls the integrated position back onto the path (rounding)
 
-    def __init__(self, up_deg: float, left_deg: float, half_range_deg: float,
-                 speed_deg_s: float, passes: int) -> None:
+    def __init__(self, left_deg: float, pan_half_deg: float, pan_speed_deg_s: float,
+                 first_row_legs: int, rise_deg_s: float, max_up_deg: float) -> None:
         self.left = left_deg
-        self.low = up_deg - half_range_deg
-        self.high = up_deg + half_range_deg
-        self.speed = speed_deg_s
-        self.passes = max(int(passes), 1)
-        self.leg_s = (self.high - self.low) / max(speed_deg_s, 0.1)
-        self.duration = self.leg_s * self.passes
+        self.half = abs(pan_half_deg)
+        self.pan_speed = max(pan_speed_deg_s, 0.1)
+        self.first_row_s = max(int(first_row_legs), 1) * self.leg_s
+        self.rise = max(rise_deg_s, 0.01)
+        self.max_up = max(max_up_deg, 0.0)
         self.pan = _AxisDrive(sign=1.0)    # + = left
         self.tilt = _AxisDrive(sign=-1.0)  # + = up (firmware - tilt)
         self.phase = "approach"
         self.phase_started: float | None = None
         self.last_now: float | None = None
+
+    @property
+    def leg_s(self) -> float:
+        return 2 * self.half / self.pan_speed
+
+    @property
+    def duration(self) -> float:
+        """Pump-on time: the first row, then the climb, then one last swing."""
+        return self.first_row_s + self.max_up / self.rise + self.leg_s
 
     @property
     def pump_wanted(self) -> bool:
@@ -153,14 +164,24 @@ class UpDownSweep:
     def done(self) -> bool:
         return self.phase == "done"
 
-    def _path(self, t: float) -> tuple[float, float]:
-        """(up position, up velocity) at sweep time t: triangle wave low <-> high."""
-        t = min(max(t, 0.0), self.duration)
-        leg = min(int(t // self.leg_s), self.passes - 1)
+    def _pan_path(self, t: float) -> tuple[float, float]:
+        """(left position, left velocity): triangle wave, right edge -> left edge first."""
+        leg = int(t // self.leg_s)
         frac = (t - leg * self.leg_s) / self.leg_s
-        going_up = leg % 2 == 0
-        up = self.low + (self.high - self.low) * (frac if going_up else 1 - frac)
-        return up, (self.speed if going_up else -self.speed)
+        to_left = leg % 2 == 0
+        lo, hi = self.left - self.half, self.left + self.half
+        pos = lo + (hi - lo) * (frac if to_left else 1 - frac)
+        return pos, (self.pan_speed if to_left else -self.pan_speed)
+
+    def _tilt_path(self, t: float) -> tuple[float, float]:
+        """(up position, up velocity): flat for the first row, then a slow climb."""
+        climb = t - self.first_row_s
+        if climb <= 0:
+            return 0.0, 0.0
+        up = climb * self.rise
+        if up >= self.max_up:
+            return self.max_up, 0.0
+        return up, self.rise
 
     def _go_to(self, left: float, up: float) -> tuple[float, float, bool]:
         dx, dy = left - self.pan.position, up - self.tilt.position
@@ -179,7 +200,7 @@ class UpDownSweep:
         if self.phase_started is None:
             self.phase_started = now
         if self.phase == "approach":
-            pan_cmd, tilt_cmd, there = self._go_to(self.left, self.low)
+            pan_cmd, tilt_cmd, there = self._go_to(self.left - self.half, 0.0)
             if not there:
                 return pan_cmd, tilt_cmd
             self.phase, self.phase_started = "sweep", now
@@ -188,10 +209,11 @@ class UpDownSweep:
             if t >= self.duration:
                 self.phase = "return"
             else:
-                up, v = self._path(t)
-                v += self.GAIN * (up - self.tilt.position)
-                hold = self.GAIN * (self.left - self.pan.position)
-                return self.pan.command(hold), self.tilt.command(v)
+                left, v_left = self._pan_path(t)
+                up, v_up = self._tilt_path(t)
+                v_left += self.GAIN * (left - self.pan.position)
+                v_up += self.GAIN * (up - self.tilt.position)
+                return self.pan.command(v_left), self.tilt.command(v_up)
         if self.phase == "return":  # back onto the flame so the camera can check it
             pan_cmd, tilt_cmd, there = self._go_to(0.0, 0.0)
             if not there:
