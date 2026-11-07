@@ -122,6 +122,50 @@ def close_serial() -> None:
             _serial = None
 
 
+def send_pump(on: bool) -> None:
+    """Switch the pump on or off on the ESP32.
+
+    The firmware has 'E' (toggle) and 'K' (force off), so "on" sends 'E' and
+    the caller must only ask for on when the pump is off. The firmware echoes
+    every change as a STATUS line ending in "on"/"off" (see pump_state_from()).
+    It also turns the pump off by itself if no command arrives for 1.5 s.
+    """
+    port = _get_serial()
+    port.write(b"E\n" if on else b"K\n")
+    port.flush()
+
+
+def send_command(letters: str) -> None:
+    """Send one-letter firmware commands (e.g. "H" level, "^" / "v" nudge, "Z", "C")."""
+    port = _get_serial()
+    port.write((letters + "\n").encode("ascii"))
+    port.flush()
+
+
+def centre_head(timeout_s: float = 6.0) -> bool:
+    """Drive both axes back to 0 and wait for the firmware's CENTRED line.
+
+    The ESP32 resets and re-zeroes whenever the port is opened, so ending every
+    run centred means the next run's zero is straight ahead and level again.
+    """
+    send_command("C")
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        for line in read_messages():
+            if line.startswith("CENTRED"):
+                return True
+        time.sleep(0.02)
+    return False
+
+
+def pump_state_from(message: str) -> bool | None:
+    """Return the pump state from a firmware STATUS line, or None for other lines."""
+    if not message.startswith("STATUS"):
+        return None
+    last = message.split()[-1]
+    return {"on": True, "off": False}.get(last)
+
+
 def send_motor_command(
     pan_command: float,
     tilt_command: float,

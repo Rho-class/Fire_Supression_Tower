@@ -42,7 +42,7 @@ while True:
         imgsz=640,
         verbose=False,
     )[0]
-
+    
     fire_detected = False
     person_detected = False
     strongest_fire_confidence = 0.0

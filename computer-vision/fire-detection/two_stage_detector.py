@@ -244,6 +244,60 @@ def find_candidates(
     return candidates[: settings.max_candidates]
 
 
+@dataclass(frozen=True)
+class FlickerSettings:
+    """A flame flickers; sky through leaves, glints and lamps mostly do not.
+
+    Each candidate is linked to the nearest candidate of the previous frame
+    (within `link_radius` px). Once its track is `window` frames long it counts
+    as flickering if its blob area changes by at least `min_area_jitter` of its
+    mean area per frame, or its peak brightness by `min_peak_jitter` grey
+    levels per frame, on average.
+    """
+
+    window: int = 8
+    link_radius: float = 10.0
+    min_area_jitter: float = 0.05
+    min_peak_jitter: float = 1.0
+
+
+class FlickerGate:
+    """Tracks candidates across frames and reports which ones flicker."""
+
+    def __init__(self, settings: FlickerSettings = FlickerSettings()) -> None:
+        self.settings = settings
+        self.tracks: list[tuple[tuple[float, float], list[tuple[float, float]]]] = []
+
+    def reset(self) -> None:
+        self.tracks = []
+
+    def update(self, frame: np.ndarray, candidates: Sequence[Candidate]) -> set[Candidate]:
+        s = self.settings
+        flickering: set[Candidate] = set()
+        new_tracks = []
+        for candidate in candidates:
+            cx, cy = candidate.centre
+            x1, y1, x2, y2 = candidate.box
+            peak = float(channel_max(frame[y1 : y2 + 1, x1 : x2 + 1]).max())
+            history: list[tuple[float, float]] = []
+            if self.tracks:
+                distances = [np.hypot(cx - tx, cy - ty) for (tx, ty), _ in self.tracks]
+                nearest = int(np.argmin(distances))
+                if distances[nearest] < s.link_radius:
+                    history = self.tracks[nearest][1]
+            history = (history + [(float(candidate.area), peak)])[-s.window :]
+            new_tracks.append(((cx, cy), history))
+            if len(history) == s.window:
+                area = np.array([h[0] for h in history])
+                peaks = np.array([h[1] for h in history])
+                area_jitter = float(np.mean(np.abs(np.diff(area)))) / max(1.0, float(area.mean()))
+                peak_jitter = float(np.mean(np.abs(np.diff(peaks))))
+                if area_jitter >= s.min_area_jitter or peak_jitter >= s.min_peak_jitter:
+                    flickering.add(candidate)
+        self.tracks = new_tracks
+        return flickering
+
+
 def crop_window(
     candidate: Candidate,
     frame_shape: tuple[int, ...],
@@ -274,9 +328,12 @@ class TwoStageDetector:
         min_crop: int = 160,
         max_crop: int = 960,
         spot_rule: SpotRule = SpotRule(enabled=False),
+        yolo_min_aspect: float = 0.0,
     ) -> None:
         self.model = model
         self.spot_rule = spot_rule
+        # YOLO-accepted spots must be at least this tall relative to wide (0 = off).
+        self.yolo_min_aspect = yolo_min_aspect
         self.settings = settings
         self.conf = conf
         self.device = device
@@ -284,6 +341,19 @@ class TwoStageDetector:
         self.context = context
         self.min_crop = min_crop
         self.max_crop = max_crop
+
+    def warmup(self) -> None:
+        """Run YOLO once on a blank crop so CUDA set-up happens at start-up.
+
+        Without this the first real candidate stalls the loop for seconds
+        (5.3 s measured live), freezing the tracker as a flame first appears.
+        """
+        blank = np.zeros((self.min_crop, self.min_crop, 3), dtype=np.uint8)
+        for _ in range(2):
+            self.model.predict(
+                [blank], imgsz=self.imgsz, conf=min(0.05, self.conf), device=self.device,
+                verbose=False, quantize=16 if self.device != "cpu" else 32,
+            )
 
     def detect(self, frame: np.ndarray, ignore_mask: np.ndarray | None = None) -> Detection:
         started = time.perf_counter()
@@ -317,7 +387,9 @@ class TwoStageDetector:
                     inside = box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
                     if int(cls) == 0 and inside and (best is None or conf > best.confidence):
                         best = Flame(candidate, round(conf, 3), box)
-            if best is not None and best.confidence >= self.conf:
+            x1, y1, x2, y2 = candidate.box
+            flame_shaped = (y2 - y1) / max(1, x2 - x1) >= self.yolo_min_aspect
+            if best is not None and best.confidence >= self.conf and flame_shaped:
                 detection.flames.append(best)
             elif self.spot_rule.accepts(candidate):
                 yolo_conf = best.confidence if best is not None else 0.0

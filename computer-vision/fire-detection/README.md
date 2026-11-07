@@ -94,7 +94,90 @@ reliably.
 .\.venv\Scripts\python.exe .\detect_candle_flame_c270.py                  # autonomous
 .\.venv\Scripts\python.exe .\detect_candle_flame_c270.py --guided         # distance test
 .\.venv\Scripts\python.exe .\detect_candle_flame_c270.py --pan-tilt-test  # aiming test
+.\.venv\Scripts\python.exe .\detect_candle_flame_c270.py --motors --port COM5  # live motors
 ```
+
+### Indoor / outdoor mode
+
+Press **O** while running to switch modes (or start with `--mode outdoor`).
+
+- **Indoor** (default): the tested settings above, exposure −7. Unchanged.
+- **Outdoor**: auto exposure for daylight. Every ~0.3 s it shortens exposure one
+  step if more than 0.5% of the frame clips to white (sky, glare) and lengthens
+  it if the scene is dark, between −13 and −7. **A** turns auto exposure off/on;
+  `[` / `]` set it by hand. Detection thresholds start equal to indoor and are
+  being tuned from outdoor recordings.
+
+Outdoor tuning session (record raw video for offline re-tuning):
+
+```powershell
+.\.venv\Scripts\python.exe .\detect_candle_flame_c270.py --mode outdoor --guided --record
+```
+
+Each run writes `runs/c270-live/session_<time>.csv` and, with `--record`,
+`session_<time>.mp4`; CSV column `frame` is the video frame number. The CSV
+also logs `mode` and `exposure` per frame.
+
+Re-grade a recording with the current (or trial) settings, no camera needed:
+
+```powershell
+.\.venv\Scripts\python.exe .\replay_c270_session.py runs\c270-live\session_20261106_161827 --mode outdoor
+.\.venv\Scripts\python.exe .\replay_c270_session.py <session> --mode outdoor --spot-min-contrast 150
+```
+
+Outdoor differs from indoor only in the far-flame spot rule (`OUTDOOR_SPOT_*`
+in `detect_candle_flame_c270.py`): aspect ≥ 0.5 instead of 1.0 (at exposure
+−11 only the flame core shows, often wind-tilted and wider than tall) and
+contrast ≥ 160 instead of 150 (late-sun glints on bark reached 134; the candle
+never fell below 174).
+
+### Search sweep (`--motors`)
+
+With nothing in view for 3 s, the pan sweeps back and forth between the
+firmware's ±45° soft limits (about 8°/s, reversing on each `LIMIT pan` reply)
+until a flame candidate appears; then it stops so the flame can be confirmed
+and tracked. **P** turns the sweep off/on. It also pauses while the pump is on.
+
+**Startup tilt:** every run (with `--motors`) first tilts the camera
+`STARTUP_TILT_DOWN_DEG` (15° down) and makes that straight ahead and level
+(firmware `Z`), then the pan sweep starts looking for a flame. Use
+`--no-level` when the head is already straight; **L** twice redoes it.
+
+When a tracked flame has been gone for 5 s and the pump is off, the head resets
+straight ahead and level (firmware `C`); the sweep waits for that reset and
+resumes 1.5 s later (`HOME_AFTER_LOST_S`, `SWEEP_AFTER_HOME_S` in `config.py`). Don't use **L** for this: L
+only undoes the hose sag right after the 12 V is turned on.
+
+### Water-arc aiming (`aim.py`)
+
+While the pump is on, the head tilts up by the low-arc launch angle for the
+flame's distance, so the stream lands on the flame instead of dropping short.
+The overlay shows `~D ft (set | size est.)  aim +X deg` and a magenta
+**water aim** marker where the flame is held while spraying.
+
+1. **Measure the nozzle speed once:** spray *level* from height H (m), measure
+   where the water lands, R (m), then
+   `.\.venv\Scripts\python.exe .\aim.py --height H --range R` and copy the
+   printed `NOZZLE_SPEED_MPS` into `config.py` (aiming stays off until set).
+2. **Distance:** press **5 / 7 / 0** (5, 7.5, 10 ft) to set it. Without that it
+   falls back to an estimate from the flame's size (`h = a + b/d`, fitted to
+   the tagged sessions; typically within ~0-2.5 ft) clamped to 5-10 ft, so the
+   aim never goes beyond 5.1-10.4°. Candle size varies, so set it when you can.
+3. **Autonomous firing** (`autofire.py`, SPACE arms / disarms): when the flame
+   has been CENTERED on the crosshair for 1 s, the head moves to the aim point
+   (the arc angle up, `AIM_LEFT_DEG` left; 7.5 ft assumed without a size
+   estimate) and the pump sprays one burst: the tilt sweeps up and down ±4°
+   through the aim point (up, down, up: 3 s), with no self-correcting. Then pump off, back onto the flame, 1 s to
+   look again; if it still burns it re-centres, locks and fires again.
+   Water: each burst is counted against a per-trial share (half a gallon / 5
+   trials = 378 mL at `PUMP_FLOW_ML_S`, an estimate until measured); once used
+   it stops firing until the flame is out and the head has gone home.
+
+Assumes the nozzle sits at the camera and the flame is about level with it.
+
+With `--motors`, **Space** arms / disarms auto-fire (it never fires on its
+own). Q turns it off before closing, and the firmware also cuts it after 1.5 s
+without commands, so a crashed laptop cannot leave it running.
 
 Design, measurements, live results, and limitations are in
 `docs/Fire_Suppression_Tower_Technical_Appendix.md`, Section K.

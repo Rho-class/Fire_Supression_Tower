@@ -7,6 +7,8 @@ from enum import Enum
 
 from config import (
     CONFIRMATION_FRAMES,
+    DEADZONE_RELEASE_X,
+    DEADZONE_RELEASE_Y,
     DEADZONE_X,
     DEADZONE_Y,
     KP_PAN,
@@ -57,6 +59,8 @@ class ProportionalFlameTracker:
         pan_invert: bool = PAN_INVERT,
         tilt_invert: bool = TILT_INVERT,
         confirmation_frames: int = CONFIRMATION_FRAMES,
+        release_x: float = DEADZONE_RELEASE_X,
+        release_y: float = DEADZONE_RELEASE_Y,
     ) -> None:
         if deadzone_x < 0 or deadzone_y < 0:
             raise ValueError("Deadzone values must be non-negative.")
@@ -78,9 +82,27 @@ class ProportionalFlameTracker:
         self.tilt_invert = tilt_invert
         self.confirmation_frames = confirmation_frames
         self.confirmation_count = 0
+        # Hysteresis: an axis that has settled inside its deadzone only moves
+        # again once the error exceeds the (larger) release distance, so flame
+        # flicker around the deadzone edge does not start/stop the motor.
+        self.release_x = max(float(release_x), self.deadzone_x)
+        self.release_y = max(float(release_y), self.deadzone_y)
+        self._settled_x = False
+        self._settled_y = False
 
     def reset(self) -> None:
         self.confirmation_count = 0
+        self._settled_x = False
+        self._settled_y = False
+
+    @staticmethod
+    def _axis(error: float, settled: bool, deadzone: float, release: float) -> tuple[bool, bool]:
+        """Return (move, settled) for one axis with enter/release hysteresis."""
+        if settled:
+            settled = abs(error) <= release
+        else:
+            settled = abs(error) <= deadzone
+        return (not settled), settled
 
     def _stopped(
         self,
@@ -120,8 +142,10 @@ class ProportionalFlameTracker:
         if self.confirmation_count < self.confirmation_frames:
             return self._stopped(TrackingState.CONFIRMING, error_x, error_y)
 
-        pan = 0.0 if abs(error_x) <= self.deadzone_x else self.kp_pan * error_x
-        tilt = 0.0 if abs(error_y) <= self.deadzone_y else self.kp_tilt * error_y
+        move_x, self._settled_x = self._axis(error_x, self._settled_x, self.deadzone_x, self.release_x)
+        move_y, self._settled_y = self._axis(error_y, self._settled_y, self.deadzone_y, self.release_y)
+        pan = self.kp_pan * error_x if move_x else 0.0
+        tilt = self.kp_tilt * error_y if move_y else 0.0
 
         if self.pan_invert:
             pan = -pan
