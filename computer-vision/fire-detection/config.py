@@ -32,8 +32,8 @@ MAX_PAN_COMMAND = 25.0
 MAX_TILT_COMMAND = 25.0
 
 # Set either value to True if physical motor direction is reversed later.
-PAN_INVERT = True
-TILT_INVERT = False
+PAN_INVERT = False  # firmware now turns the camera RIGHT for + pan (2026-11-09)
+TILT_INVERT = True  # tracking tilt pulled away from the flame on the rewired tower (2026-11-09)
 
 CONFIRMATION_FRAMES = 5
 
@@ -43,7 +43,7 @@ CONFIRMATION_FRAMES = 5
 # PAN_LIMIT_DEG in firmware/src/main.cpp), reversing on each "LIMIT pan" reply.
 # PATROL_PAN_COMMAND uses the tracker's command scale (0..MAX_PAN_COMMAND); the
 # firmware maps 6 to about 8 deg/s of head motion, so one sweep takes ~11 s.
-PATROL_ENABLED = True
+PATROL_ENABLED = False
 PATROL_PAN_COMMAND = 6.0
 PATROL_IDLE_S = 3.0
 
@@ -51,7 +51,7 @@ PATROL_IDLE_S = 3.0
 # with the 12 V on the head starts tilted, so the laptop tilts the camera
 # STARTUP_TILT_DOWN_DEG (+ = down, - = up) and makes that straight and level
 # before the pan sweep starts looking for a flame.
-STARTUP_TILT_DOWN_DEG = 15.0
+STARTUP_TILT_DOWN_DEG = -25.0  # rewired tower: - tilts the camera DOWN (2026-11-09)
 LEVEL_PAN_SPEED_DEG_S = 10.0
 LEVEL_TILT_SPEED_DEG_S = 8.0
 
@@ -76,7 +76,7 @@ CAMERA_FOCAL_PX = 1410.0
 AIM_MAX_OFFSET_PX = 300.0
 # Aim point sideways, degrees LEFT of the flame (+ = left). The stream landed
 # a few inches right of the flame at ~5-7 ft (~2 deg). , / . trim it live.
-AIM_LEFT_DEG = 2.0
+AIM_LEFT_DEG = -2.0  # + pan is now camera RIGHT, so -2 = 2 deg LEFT of the flame
 
 # Autonomous firing (autofire.py): once the flame is CENTERED on the crosshair
 # for AUTOFIRE_LOCK_S, the head moves to the aim point (water-arc angle up,

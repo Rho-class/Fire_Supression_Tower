@@ -71,10 +71,13 @@ const char *HOME_PASS = "your-wifi-password";
 const char *HOSTNAME  = "stepper";         // -> http://stepper.local on home Wi-Fi
 
 // ---------- Pins ----------
-constexpr uint8_t M1_STEP_PIN = 18;
-constexpr uint8_t M1_DIR_PIN  = 19;
-constexpr uint8_t M2_STEP_PIN = 21;
-constexpr uint8_t M2_DIR_PIN  = 22;
+// The pan and tilt motors are wired to each other's drivers on the tower
+// (checked 2026-11-09 with the WASD tester), so the pins are swapped here
+// instead of rewiring: motor 1 (pan) uses D21/D22, motor 2 (tilt) D18/D19.
+constexpr uint8_t M1_STEP_PIN = 21;
+constexpr uint8_t M1_DIR_PIN  = 22;
+constexpr uint8_t M2_STEP_PIN = 18;
+constexpr uint8_t M2_DIR_PIN  = 19;
 constexpr uint8_t PUMP_PIN    = 23;         // HIGH = pump on
 
 // ---------- Motor setup ----------
@@ -83,8 +86,8 @@ constexpr int   MICROSTEPS         = 8;     // MS1/MS2 open on TMC2208
 constexpr float STEPS_PER_REV      = FULL_STEPS_PER_REV * MICROSTEPS;  // 1600
 
 // Set true for a motor that turns the wrong way.
-constexpr bool M1_INVERT_DIRECTION = true;   // pan motor is mounted reversed
-constexpr bool M2_INVERT_DIRECTION = false;
+constexpr bool M1_INVERT_DIRECTION = false;  // 2026-11-09: A/D were backwards on the rewired tower
+constexpr bool M2_INVERT_DIRECTION = true;   // 2026-11-09: W/S were backwards on the rewired tower
 
 // Flip the vision PAN:/TILT: axis sense without rewiring (after laptop invert flags).
 constexpr bool PAN_AXIS_INVERT  = false;

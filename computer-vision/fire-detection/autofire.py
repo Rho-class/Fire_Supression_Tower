@@ -113,7 +113,7 @@ class AutoFire:
     def status(self) -> str:
         water = f"water {self.trial_ml:.0f}/{self.budget_ml:.0f} mL"
         if not self.armed:
-            return f"AUTO-FIRE OFF (SPACE = on)  {water}"
+            return f"AUTO-FIRE OFF (F = on, SPACE = pump)  {water}"
         if self.state == "FIRE" and self.spiral is not None:
             what = "aiming" if self.spiral.phase == "approach" else (
                 "SPRAYING up/down" if self.spiral.phase == "sweep" else "back to flame")

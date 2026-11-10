@@ -21,7 +21,8 @@ Do not go shorter than about -7 under mains-powered lights: below ~1/120 s the
 lights' 120 Hz flicker shows as horizontal bands and the flame is lost.
 
 Optional keys (none are required for detection):
-       SPACE  auto-fire on / off (it locks 1 s, then sprays up/down; off = pump off now)
+       SPACE  pump on / off by hand (needs --motors; Q also turns it off)
+       F  auto-fire on / off (off at start: locks 1 s, then sprays up/down)
        O  switch INDOOR / OUTDOOR mode    A  outdoor auto exposure on / off
        P  search sweep on / off: with nothing in view for 3 s the pan sweeps
           +/- 45 deg until a flame appears (on by default with --motors)
@@ -576,7 +577,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
     distance_ft: float | None = None
     # Autonomous firing (autofire.py): lock 1 s, sweep the water up/down, check, repeat.
     # SPACE arms / disarms it. Needs the real pump (--motors).
-    autofire = AutoFire(armed=not simulate)
+    autofire = AutoFire(armed=False)  # F arms it; SPACE is the manual pump
     last_pump_request = 0.0
     aim_left_deg = AIM_LEFT_DEG  # aim point left of the flame; , / . trim it live
     patrol_hold_until = 0.0  # levelling keys pause the sweep briefly
@@ -713,7 +714,8 @@ def run(args: argparse.Namespace) -> FlameDetection:
             if fire_override is not None:  # firing / checking: autofire drives the head
                 pan_out, tilt_out = fire_override
                 patrol_pan = None
-            if not simulate and clock - last_pump_request >= 0.4:
+            if autofire.armed and not simulate and clock - last_pump_request >= 0.4:
+                # Auto-fire owns the pump only while armed (SPACE is manual).
                 # The firmware's 'E' toggles, so only ask when the state differs.
                 if pump_wanted and not pump_on:
                     send_pump(True)
@@ -827,16 +829,25 @@ def run(args: argparse.Namespace) -> FlameDetection:
                 if simulate:
                     print("Pump: SPACE only works with --motors (simulation).", flush=True)
                 elif time.perf_counter() - last_pump_toggle >= PUMP_TOGGLE_MIN_S:
-                    # SPACE arms / disarms auto-fire (holding it auto-repeats, so
-                    # at most one switch per PUMP_TOGGLE_MIN_S). Disarm = pump off now.
+                    # Manual pump. Holding SPACE auto-repeats, so at most one switch
+                    # per PUMP_TOGGLE_MIN_S. Pressing it also disarms auto-fire.
                     last_pump_toggle = time.perf_counter()
                     if autofire.armed:
                         autofire.disarm()
-                        send_pump(False)
                         tracker.reset()
-                    else:
-                        autofire.armed = True
-                    print(f"Auto-fire {'ARMED' if autofire.armed else 'OFF'}", flush=True)
+                        print("Auto-fire OFF (SPACE is manual pump)", flush=True)
+                    send_pump(not pump_on)  # pump_on updates when STATUS comes back
+            elif key in (ord("f"), ord("F")):
+                if simulate:
+                    print("Auto-fire needs --motors.", flush=True)
+                elif autofire.armed:
+                    autofire.disarm()
+                    send_pump(False)
+                    tracker.reset()
+                    print("Auto-fire OFF", flush=True)
+                else:
+                    autofire.armed = True
+                    print("Auto-fire ARMED (F turns it off)", flush=True)
             elif key in DISTANCE_KEYS:
                 log.set_tag(DISTANCE_KEYS[key])
             elif key in (ord("b"), ord("B")):
