@@ -123,15 +123,17 @@ class UpDownSweep:
     `left_deg` left of it; the tilt sweeps +/- half_range_deg around it at
     speed_deg_s for `passes` legs (up, down, up, ...). Open loop from where the
     tracker left the head (centred on the flame): no self-correcting while
-    spraying. Coordinates: up + = higher, left + = left. Firmware commands:
-    + pan turns the camera left, + tilt lowers it.
+    spraying. Coordinates: up + = higher, left + = left. left_sign / up_sign
+    are the firmware command signs that turn the camera left / up on this
+    tower (see autofire.axis_signs(): they follow PAN_INVERT / TILT_INVERT).
     """
 
     APPROACH_DEG_S = 10.0
     GAIN = 3.0  # pulls the integrated position back onto the path (rounding)
 
     def __init__(self, up_deg: float, left_deg: float, half_range_deg: float,
-                 speed_deg_s: float, passes: int) -> None:
+                 speed_deg_s: float, passes: int, left_sign: float = 1.0,
+                 up_sign: float = -1.0) -> None:
         self.left = left_deg
         self.low = up_deg - half_range_deg
         self.high = up_deg + half_range_deg
@@ -139,8 +141,8 @@ class UpDownSweep:
         self.passes = max(int(passes), 1)
         self.leg_s = (self.high - self.low) / max(speed_deg_s, 0.1)
         self.duration = self.leg_s * self.passes
-        self.pan = _AxisDrive(sign=1.0)    # + = left
-        self.tilt = _AxisDrive(sign=-1.0)  # + = up (firmware - tilt)
+        self.pan = _AxisDrive(sign=left_sign)  # + = camera left
+        self.tilt = _AxisDrive(sign=up_sign)   # + = camera up
         self.phase = "approach"
         self.phase_started: float | None = None
         self.last_now: float | None = None

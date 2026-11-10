@@ -18,10 +18,24 @@ from __future__ import annotations
 
 from aim import UpDownSweep
 from config import (
-    AUTOFIRE_CHECK_S, AUTOFIRE_LOCK_S, FIRE_SWEEP_HALF_DEG, FIRE_SWEEP_PASSES,
-    FIRE_SWEEP_SPEED_DEG_S, PUMP_FLOW_ML_S, RESERVOIR_ML, TRIALS,
+    AUTOFIRE_CHECK_S, AUTOFIRE_LOCK_S, FIRE_CENTER_UP_DEG, FIRE_SWEEP_HALF_DEG,
+    FIRE_SWEEP_PASSES, FIRE_SWEEP_SPEED_DEG_S, PAN_INVERT, PUMP_FLOW_ML_S, RESERVOIR_ML,
+    TILT_INVERT, TRIALS,
 )
 from target_tracking import TrackingState
+
+
+def axis_signs(pan_invert: bool = PAN_INVERT, tilt_invert: bool = TILT_INVERT) -> tuple[float, float]:
+    """Firmware command signs that turn the camera (left, up) on this tower.
+
+    The tracker's flags are already proven on the hardware: with no invert a
+    flame RIGHT of centre sends + pan and a flame BELOW sends + tilt, and the
+    head turns toward it. So + pan turns the camera right unless PAN_INVERT,
+    and + tilt turns it down unless TILT_INVERT.
+    """
+    left = 1.0 if pan_invert else -1.0
+    up = 1.0 if tilt_invert else -1.0
+    return left, up
 
 
 class AutoFire:
@@ -85,8 +99,12 @@ class AutoFire:
             if now - self.since < self.lock_s:
                 return None, False
             self.state, self.since = "FIRE", now
-            self.spiral = UpDownSweep(aim_up_deg, aim_left_deg, FIRE_SWEEP_HALF_DEG,
-                                      FIRE_SWEEP_SPEED_DEG_S, FIRE_SWEEP_PASSES)
+            # The band above the flame covers every 5-10 ft arc, so neither the
+            # distance nor the candle height is needed (aim_up_deg is ignored).
+            left_sign, up_sign = axis_signs()
+            self.spiral = UpDownSweep(FIRE_CENTER_UP_DEG, aim_left_deg, FIRE_SWEEP_HALF_DEG,
+                                      FIRE_SWEEP_SPEED_DEG_S, FIRE_SWEEP_PASSES,
+                                      left_sign=left_sign, up_sign=up_sign)
             self.bursts += 1
 
         if self.state == "FIRE":

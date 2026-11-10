@@ -25,6 +25,9 @@ import cv2
 from detect_candle_flame_c270 import (
     DEFAULT_MODEL,
     HOLD_FRAMES,
+    OUTDOOR_BRIGHT_EXPOSURE,
+    OUTDOOR_BRIGHT_FLICKER,
+    OUTDOOR_BRIGHT_MIN_WARMTH,
     OUTDOOR_FLICKER,
     YOLO_MIN_ASPECT,
     SessionLog,
@@ -52,7 +55,9 @@ def replay(
 
     video, table = session.with_suffix(".mp4"), session.with_suffix(".csv")
     with table.open(newline="", encoding="utf-8") as handle:
-        logged = [(row["tag"], float(row["time_s"])) for row in csv.DictReader(handle)]
+        logged_rows = list(csv.DictReader(handle))
+    logged = [(row["tag"], float(row["time_s"])) for row in logged_rows]
+    exposures = [float(row["exposure"]) if row.get("exposure") else None for row in logged_rows]
     tags = [tag for tag, _ in logged]
     profiles = build_profiles(live_parse_args(live_argv))
     settings, spot_rule = profiles[mode]
@@ -67,6 +72,9 @@ def replay(
     )
     tracker = ProportionalFlameTracker()
     flicker_gate = FlickerGate(flicker)
+    bright_gate = FlickerGate(OUTDOOR_BRIGHT_FLICKER)
+    dim_settings = settings
+    bright_settings = replace(settings, min_warmth=OUTDOOR_BRIGHT_MIN_WARMTH)
     log = SessionLog()
     capture = cv2.VideoCapture(str(video))
     if not capture.isOpened():
@@ -81,9 +89,16 @@ def replay(
             break
         if tag != log.tag:
             log.tag = tag
+        # Like the live run: strict limits in bright sun (short logged exposure).
+        bright = (mode == "outdoor" and exposures[index] is not None
+                  and exposures[index] <= OUTDOOR_BRIGHT_EXPOSURE)
+        detector.settings = bright_settings if bright else dim_settings
         detection = detector.detect(frame)
         if mode == "outdoor" and not no_flicker:
-            keep_flickering_spots(detection, frame, flicker_gate)
+            if bright:
+                keep_flickering_spots(detection, frame, bright_gate, None)
+            else:
+                keep_flickering_spots(detection, frame, flicker_gate)
         result = to_flame_detection(detection)
         if result["flame_detected"]:
             held, missed = (result["center_x"], result["center_y"]), 0

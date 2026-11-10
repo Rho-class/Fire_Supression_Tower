@@ -55,6 +55,17 @@ STARTUP_TILT_DOWN_DEG = -25.0  # rewired tower: - tilts the camera DOWN (2026-11
 LEVEL_PAN_SPEED_DEG_S = 10.0
 LEVEL_TILT_SPEED_DEG_S = 8.0
 
+# Startup levelling from a taught picture (level_ref.py): teach once with
+# level_teach.py (point straight ahead + level, press T). Each startup matches
+# the live view to it and moves the head back there; if no picture is taught
+# or it cannot match, the fixed STARTUP_TILT_DOWN_DEG move is used instead.
+LEVEL_REFERENCE = "level_reference.png"
+LEVEL_TOLERANCE_DEG = 1.0  # within this of the picture = level (moves under 1 deg are skipped)
+LEVEL_TRIES = 4            # measure-and-move rounds before giving up
+LEVEL_SEARCH_DEG = (10.0, -20.0, 30.0, -40.0, 50.0, -60.0)  # tilt steps (+ = up) while
+                           # the picture is not in view: +10, -10, +20, -20, +30, -30 net
+LEVEL_MIN_MATCHES = 25     # agreeing ORB features needed to trust a match
+
 # After a tracked flame has been gone this long with the pump off, the head
 # resets straight ahead and level (firmware 'C'); the search sweep waits for
 # that and starts SWEEP_AFTER_HOME_S later (the centre move takes about 1 s).
@@ -76,22 +87,23 @@ CAMERA_FOCAL_PX = 1410.0
 AIM_MAX_OFFSET_PX = 300.0
 # Aim point sideways, degrees LEFT of the flame (+ = left). The stream landed
 # a few inches right of the flame at ~5-7 ft (~2 deg). , / . trim it live.
-AIM_LEFT_DEG = -2.0  # + pan is now camera RIGHT, so -2 = 2 deg LEFT of the flame
+AIM_LEFT_DEG = 2.0  # + = LEFT of the flame (direction follows PAN_INVERT)
 
-# Autonomous firing (autofire.py): once the flame is CENTERED on the crosshair
-# for AUTOFIRE_LOCK_S, the head moves to the aim point (water-arc angle up,
-# AIM_LEFT_DEG left) and the pump sprays one burst: the tilt sweeps up and down
-# +/- FIRE_SWEEP_HALF_DEG through the aim point at FIRE_SWEEP_SPEED_DEG_S for
-# FIRE_SWEEP_PASSES legs (up, down, up), no self-correcting. Pump off, back on
-# the flame, AUTOFIRE_CHECK_S to look again; if it still burns it locks and
-# fires again. Without a distance estimate the arc is worked out for
-# AUTOFIRE_DEFAULT_DISTANCE_FT (middle of 5-10 ft).
+# Autonomous firing (autofire.py, F arms it): once the flame is CENTERED on the
+# crosshair for AUTOFIRE_LOCK_S, the head moves AIM_LEFT_DEG left and to the
+# bottom of the band below, then the pump sprays one burst while the tilt
+# sweeps up and down through the band (no self-correcting). Pump off, back on
+# the flame, AUTOFIRE_CHECK_S to look again; if it still burns it fires again.
 AUTOFIRE_LOCK_S = 1.0
 AUTOFIRE_CHECK_S = 1.0
-AUTOFIRE_DEFAULT_DISTANCE_FT = 7.5
-FIRE_SWEEP_HALF_DEG = 4.0     # covers ~5-10 ft around a 7.5 ft guess
-FIRE_SWEEP_SPEED_DEG_S = 8.0  # one 8 deg leg per second
-FIRE_SWEEP_PASSES = 3         # up, down, up = 3 s of pump per burst
+# Height-independent band: each burst sweeps FIRE_CENTER_UP_DEG +/- HALF above
+# the line to the flame = 3.75..11.75 deg, which covers the water arc for every
+# distance from 5 ft (5.1 deg) to 10 ft (10.4 deg) at any candle height, with
+# margin for the nozzle speed. The flame-size distance guess is not used.
+FIRE_CENTER_UP_DEG = 7.75
+FIRE_SWEEP_HALF_DEG = 4.0
+FIRE_SWEEP_SPEED_DEG_S = 5.0  # one 8 deg leg in 1.6 s
+FIRE_SWEEP_PASSES = 2         # up then down = 3.2 s of pump per burst
 
 # Water budget: half a gallon for five trials. PUMP_FLOW_ML_S is an ESTIMATE
 # until measured: run the pump 10 s into a measuring cup and divide mL by 10.

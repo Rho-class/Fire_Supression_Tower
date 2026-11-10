@@ -53,7 +53,7 @@ from config import (
     AIM_LEFT_DEG, CONFIRMATION_FRAMES, HOME_AFTER_LOST_S, NOZZLE_SPEED_MPS,
     PAN_INVERT, SWEEP_AFTER_HOME_S,
     PATROL_ENABLED, SIMULATION_MODE, TILT_INVERT,
-    AUTOFIRE_DEFAULT_DISTANCE_FT, STARTUP_TILT_DOWN_DEG,
+    STARTUP_TILT_DOWN_DEG,
 )
 from detect_candle_flame import (
     FlameDetection,
@@ -67,6 +67,7 @@ from motor_interface import (
 )
 from aim import FT, DistanceEstimator, launch_angle_deg
 from autofire import AutoFire
+from level_ref import load_reference, run_reference_level
 from patrol import HeadLeveller, HomeReturn, PanPatrol
 from target_tracking import ProportionalFlameTracker, TrackingState
 from two_stage_detector import (
@@ -123,8 +124,23 @@ OUTDOOR_SPOT_MIN_CONTRAST = 160.0
 # through. Among spots with contrast >= 160, sky gaps were mostly warmth 25-32
 # (max 52) and steady; the candle was warmth >= ~40 in both sessions (lowest 31)
 # and flickers. Outdoors a far-flame spot must be warm AND flicker.
-OUTDOOR_MIN_WARMTH = 35.0
-OUTDOOR_FLICKER = FlickerSettings()
+# session_20261110_061410 (tea lights at dusk, 5-10 ft): a tea light is small
+# and burns steadily, so the old limits (warmth 35, default flicker) caught only
+# 53% / 46% / 36% of frames at 5 / 7.5 / 10 ft (far ones read warmth 35-39, close
+# ones barely flicker). Warmth 28, a lighter flicker test, and accepting a steady
+# spot when it is clearly flame-warm (>= OUTDOOR_STEADY_WARMTH) caught 88 / 72 /
+# 86% with no false lock on 140 s of the same scene without candles.
+# Those looser limits must not run in bright sun: on session 163811 (low sun
+# through trees) the lighter flicker test let twinkling sky gaps through on ~77%
+# of no-candle frames (the strict limits: ~16%). The outdoor auto exposure tells
+# the two apart (sunny sessions settle at -11 / -12, dusk at -7 / -8), so the
+# strict limits are used when exposure <= OUTDOOR_BRIGHT_EXPOSURE.
+OUTDOOR_MIN_WARMTH = 28.0     # dim (dusk / shade) limits: tea lights
+OUTDOOR_FLICKER = FlickerSettings(window=6, min_area_jitter=0.02, min_peak_jitter=0.3)
+OUTDOOR_STEADY_WARMTH = 50.0  # dim: this warm counts as a flame even without flicker
+OUTDOOR_BRIGHT_EXPOSURE = -10.0
+OUTDOOR_BRIGHT_MIN_WARMTH = 35.0          # bright (sun) limits: resist sky glare
+OUTDOOR_BRIGHT_FLICKER = FlickerSettings()
 
 # Head levelling keys -> firmware commands (see firmware/src/main.cpp):
 # H tilts forward TILT_LEVEL_OFFSET_DEG and calls it level, ^ / v nudge 1 deg, Z zero.
@@ -139,6 +155,12 @@ DISTANCE_KEYS = {ord("1"): "1ft", ord("5"): "5ft", ord("7"): "7.5ft", ord("0"): 
                  ord("n"): "no-candle", ord("N"): "no-candle"}
 LOG_DIR = HERE / "runs" / "c270-live"
 HOLD_FRAMES = 3  # keep the last target through this many missed frames
+# Several candles / reflections: keep following the flame nearest the one being
+# tracked (within STICKY_PX), and drop a spot directly below another (within
+# REFLECTION_MAX_GAP flame heights): that is the holder's reflection.
+STICKY_PX = 120
+REFLECTION_MAX_GAP = 4.0
+LOCK_SWITCH_FRAMES = 15  # ~0.5 s unseen before switching to another candle
 PUMP_TOGGLE_MIN_S = 0.5  # holding SPACE auto-repeats; at most one pump switch per this
 # Startup help: the docstring's key section (empty if the heading is renamed).
 KEY_HELP = (__doc__ or "").partition("Optional keys")[2].strip()
@@ -428,14 +450,18 @@ def outdoor_profile(
     )
 
 
-def keep_flickering_spots(detection: Detection, frame: np.ndarray, gate: FlickerGate) -> None:
+def keep_flickering_spots(detection: Detection, frame: np.ndarray, gate: FlickerGate,
+                          steady_warmth: float | None = OUTDOOR_STEADY_WARMTH) -> None:
     """Outdoor: drop far-flame (spot-rule) flames whose spot does not flicker.
 
     YOLO-confirmed flames are kept. Called every frame so tracks stay continuous.
     """
     flickering = gate.update(frame, detection.candidates)
     detection.flames = [
-        f for f in detection.flames if f.source != "spot" or f.candidate in flickering
+        f for f in detection.flames
+        if f.source != "spot" or f.candidate in flickering
+        or (steady_warmth is not None
+            and f.candidate.warmth >= steady_warmth)  # steady but clearly flame-warm
     ]
 
 
@@ -480,6 +506,81 @@ def to_flame_detection(detection: Detection) -> FlameDetection:
         "center_y": best["center_y"] if best else None,
         "detections": detections,
     }
+
+
+def drop_reflections(result: FlameDetection) -> None:
+    """Remove a spot sitting just below another one: the candle's reflection.
+
+    A shiny holder or table shows a dimmer copy of the flame directly below it.
+    For two spots stacked vertically (centres within ~1.5 flame widths
+    sideways, the lower one within REFLECTION_MAX_GAP flame heights below),
+    only the upper one is a flame.
+    """
+    dets = result["detections"]
+    keep = []
+    for d in dets:
+        x1, y1, x2, y2 = d["bounding_box"]
+        reflection = False
+        for other in dets:
+            if other is d:
+                continue
+            ox1, oy1, ox2, oy2 = other["bounding_box"]
+            ow, oh = max(ox2 - ox1, 1), max(oy2 - oy1, 1)
+            dx = abs(d["center_x"] - other["center_x"])
+            dy = d["center_y"] - other["center_y"]  # > 0: d is below other
+            if dx <= 1.5 * max(ow, 10) and 0 < dy <= REFLECTION_MAX_GAP * max(oh, 10):
+                reflection = True
+                break
+        if not reflection:
+            keep.append(d)
+    if len(keep) != len(dets):
+        _set_detections(result, keep)
+
+
+class TargetLock:
+    """Stay on the flame being tracked instead of jumping between candles.
+
+    With several candles (or a flame and its reflection) the best-scoring spot
+    can change every frame, and a small far flame is often missed for a frame
+    or two while another candle is still seen, so the tracker never settles.
+    Once locked, only a spot within STICKY_PX of the locked flame counts; other
+    candles are ignored until the locked one has been unseen for
+    LOCK_SWITCH_FRAMES (e.g. it has been put out), then the best spot is taken.
+    """
+
+    def __init__(self) -> None:
+        self.target: tuple[int, int] | None = None
+        self.unseen = 0
+
+    def apply(self, result: FlameDetection) -> None:
+        dets = result["detections"]
+        if self.target is not None and self.unseen <= LOCK_SWITCH_FRAMES:
+            tx, ty = self.target
+            near = [d for d in dets
+                    if (d["center_x"] - tx) ** 2 + (d["center_y"] - ty) ** 2 <= STICKY_PX ** 2]
+            if near:
+                nearest = min(near, key=lambda d: (d["center_x"] - tx) ** 2
+                              + (d["center_y"] - ty) ** 2)
+                _set_detections(result, [nearest] + [d for d in dets if d is not nearest])
+            else:
+                _set_detections(result, [])  # only other candles: treat as a miss
+        if result["flame_detected"]:
+            self.target, self.unseen = (result["center_x"], result["center_y"]), 0
+        else:
+            self.unseen += 1
+            if self.unseen > LOCK_SWITCH_FRAMES:
+                self.target = None  # gone: free to lock onto another flame
+
+
+def _set_detections(result: FlameDetection, dets: list) -> None:
+    result["detections"] = dets
+    best = dets[0] if dets else None
+    result["flame_detected"] = bool(dets)
+    result["flame_count"] = len(dets)
+    result["confidence"] = best["confidence"] if best else 0.0
+    result["bounding_box"] = best["bounding_box"] if best else None
+    result["center_x"] = best["center_x"] if best else None
+    result["center_y"] = best["center_y"] if best else None
 
 
 def learn_background(camera: cv2.VideoCapture, settings: CandidateSettings) -> np.ndarray:
@@ -583,7 +684,8 @@ def run(args: argparse.Namespace) -> FlameDetection:
     patrol_hold_until = 0.0  # levelling keys pause the sweep briefly
     # Raise the head off the hose sag before searching (--level, or L L).
     leveller: HeadLeveller | None = None
-    if not args.no_level and not simulate and STARTUP_TILT_DOWN_DEG:
+    level_reference = None if (args.no_level or simulate) else load_reference()
+    if level_reference is None and not args.no_level and not simulate and STARTUP_TILT_DOWN_DEG:
         leveller = HeadLeveller(STARTUP_TILT_DOWN_DEG)
         side = "down" if STARTUP_TILT_DOWN_DEG > 0 else "up"
         print(f"Startup: tilting the camera {abs(STARTUP_TILT_DOWN_DEG):g} deg {side} to "
@@ -591,7 +693,9 @@ def run(args: argparse.Namespace) -> FlameDetection:
     pending_level: tuple[float, str] | None = None  # (send at, letters)
     level_armed_at, level_used = 0.0, False  # L needs a 2nd press; once per run
     last_pump_toggle = 0.0
-    flicker_gate = FlickerGate(OUTDOOR_FLICKER)  # outdoor only
+    flicker_gate = FlickerGate(OUTDOOR_FLICKER)  # outdoor only, dim light
+    bright_flicker_gate = FlickerGate(OUTDOOR_BRIGHT_FLICKER)  # outdoor only, bright sun
+    outdoor_bright = None  # which outdoor limits are in use (follows the exposure)
     ignore_mask: np.ndarray | None = None  # learned background lights (B)
     top_rows = int(round(args.ignore_top * height))
     top_mask: np.ndarray | None = None
@@ -615,7 +719,29 @@ def run(args: argparse.Namespace) -> FlameDetection:
         if not recorder.isOpened():
             raise RuntimeError(f"Could not create {video_path}")
         print(f"Recording raw video to {video_path} (frame N = CSV 'frame' N)", flush=True)
+    if level_reference is not None:
+        # Move the head back to the taught level view (level_ref.py), then
+        # restore the dark manual exposure the flame detector needs.
+        print("Levelling: matching the view with the taught level picture...", flush=True)
+        levelled = run_reference_level(
+            camera, WINDOW_TITLE, level_reference,
+            lambda p, t: send_motor_command(p, t, simulation_mode=False, log_simulation=False),
+            send_command, read_messages)
+        camera.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+        set_exposure(camera, exposure)
+        if levelled.state == "done":
+            print("Level: back at the taught straight-ahead view.", flush=True)
+        else:
+            # No fixed-tilt fallback here: with a taught picture it would only
+            # move the head further from level. Use I / K to fix it by hand.
+            print(f"Levelling NOT done ({levelled.message}); starting from where the head "
+                  "is (I / K adjust it).", flush=True)
     held_target: tuple[int, int] | None = None
+    target_lock = TargetLock()  # stay on one candle when several are in view
+    if leveller is None:
+        # Startup levelling is done (or not needed): sweep for a flame straight
+        # away instead of waiting PATROL_IDLE_S first.
+        patrol.start_after(time.perf_counter(), 0.0)
     missed_frames = 0
     frame_index = 0
     latest: FlameDetection = to_flame_detection(Detection())
@@ -642,10 +768,24 @@ def run(args: argparse.Namespace) -> FlameDetection:
                 active_mask = top_mask | ignore_mask
             if guided is not None:
                 guided.tick()
+            if mode == "outdoor":
+                bright = exposure <= OUTDOOR_BRIGHT_EXPOSURE
+                if bright != outdoor_bright:
+                    outdoor_bright = bright
+                    detector.settings = replace(
+                        profiles["outdoor"][0],
+                        min_warmth=OUTDOOR_BRIGHT_MIN_WARMTH if bright else OUTDOOR_MIN_WARMTH)
+                    print(f"Outdoor limits: {'BRIGHT (sun)' if bright else 'DIM (dusk / shade)'}"
+                          f" at exposure {exposure:g}", flush=True)
             detection = detector.detect(frame, active_mask)
             if mode == "outdoor":
-                keep_flickering_spots(detection, frame, flicker_gate)
+                if outdoor_bright:
+                    keep_flickering_spots(detection, frame, bright_flicker_gate, None)
+                else:
+                    keep_flickering_spots(detection, frame, flicker_gate)
             result = to_flame_detection(detection)
+            drop_reflections(result)
+            target_lock.apply(result)
             # Bridge brief dropouts (a flickering flame can miss a frame) so the
             # tracker does not restart confirmation and the aim does not stutter.
             if result["flame_detected"]:
@@ -679,12 +819,9 @@ def run(args: argparse.Namespace) -> FlameDetection:
                     aim_deg = launch_angle_deg(distance_ft * FT, NOZZLE_SPEED_MPS)
                     if aim_deg is None:
                         aim_note = "OUT OF RANGE"
-            # Water-arc angle for the aim point; without a size estimate,
-            # assume the middle of the 5-10 ft range.
-            aim_up_deg = aim_deg
-            if aim_up_deg is None and NOZZLE_SPEED_MPS is not None:
-                aim_up_deg = launch_angle_deg(AUTOFIRE_DEFAULT_DISTANCE_FT * FT, NOZZLE_SPEED_MPS)
-            aim_up_deg = aim_up_deg or 0.0
+            # Auto-fire sweeps a fixed band above the flame (FIRE_CENTER_UP_DEG),
+            # so the size-based distance (aim_deg) is only shown, not used.
+            aim_up_deg = 0.0
             log.distance_ft = round(distance_ft, 2) if distance_ft is not None else ""
             log.aim_deg = (round(autofire.spiral.tilt.position, 2)
                            if autofire.spiral is not None else "")
@@ -766,6 +903,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
                         leveller.on_message(message)
                         if leveller.done:
                             leveller = None
+                            patrol.start_after(time.perf_counter(), 0.0)  # sweep now
                             print("Head level: this is now straight ahead and level.",
                                   flush=True)
                     if message.startswith(("LIMIT", "ZERO", "LEVEL", "NUDGE", "CENTRE", "MOVE")):
@@ -861,6 +999,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
             elif key in (ord("o"), ord("O")):
                 mode = "outdoor" if mode == "indoor" else "indoor"
                 detector.settings, detector.spot_rule = profiles[mode]
+                outdoor_bright = None  # re-pick the outdoor limits from the exposure
                 auto_exposure = mode == "outdoor"
                 exposure = OUTDOOR_START_EXPOSURE if mode == "outdoor" else args.exposure
                 set_exposure(camera, exposure)

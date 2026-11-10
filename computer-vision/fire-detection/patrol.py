@@ -94,10 +94,15 @@ class HomeReturn:
     Home is straight ahead and level (the firmware's 'C' centre move). It fires
     once per lost track, after the flame has been absent for `after_s` and the
     pump is off, so a flickering flame or an active spray does not trigger it.
+    A track only counts once it has lasted min_track_frames (~0.5 s): a one-
+    frame glimpse at the edge of the picture must not stop the search sweep
+    for after_s every time.
     """
 
-    def __init__(self, after_s: float = HOME_AFTER_LOST_S) -> None:
+    def __init__(self, after_s: float = HOME_AFTER_LOST_S, min_track_frames: int = 15) -> None:
         self.after_s = after_s
+        self.min_track_frames = min_track_frames
+        self.track_frames = 0
         self.had_target = False
         self.lost_since: float | None = None
 
@@ -106,9 +111,12 @@ class HomeReturn:
         """True exactly once when the head should go home."""
         if flame_seen or tracking_state in _TRACKER_OWNS:
             if tracking_state in (TrackingState.TRACKING, TrackingState.CENTERED):
-                self.had_target = True
+                self.track_frames += 1
+                if self.track_frames >= self.min_track_frames:
+                    self.had_target = True
             self.lost_since = None
             return False
+        self.track_frames = 0
         if not self.had_target or pump_on:
             self.lost_since = None if pump_on else self.lost_since
             return False
@@ -131,7 +139,8 @@ class HeadLeveller:
     Positions come from POS replies to '?'.
     """
 
-    def __init__(self, down_deg: float, step_deg: float = 18.0) -> None:
+    def __init__(self, down_deg: float, step_deg: float = 18.0, pan_deg: float = 0.0) -> None:
+        self.pan_target = pan_deg  # firmware pan degrees, moved with the first step
         self.sign = 1.0 if down_deg >= 0 else -1.0
         self.remaining = abs(down_deg)
         self.step_deg = step_deg
@@ -161,7 +170,7 @@ class HeadLeveller:
                 return 0.0, 0.0, None
             pan, tilt = self.position
             target_tilt = self.sign * min(self.remaining, self.step_deg)
-            pan_cmd = _axis_command(0.0 - pan, LEVEL_PAN_SPEED_DEG_S)
+            pan_cmd = _axis_command(self.pan_target - pan, LEVEL_PAN_SPEED_DEG_S)
             tilt_cmd = _axis_command(target_tilt - tilt, LEVEL_TILT_SPEED_DEG_S)
             if pan_cmd or tilt_cmd:
                 return pan_cmd, tilt_cmd, None
@@ -185,5 +194,6 @@ class HeadLeveller:
             self.state, self.settle_until = "settle", self.last_now + 0.5
         elif self.state == "zero" and message.startswith("ZERO current"):
             self.remaining -= self.moved
+            self.pan_target = 0.0  # the zero now includes the pan move
             self.position = None  # positions restart from the new zero
             self.state = "move" if self.remaining > 1.0 else "done"

@@ -2,7 +2,8 @@
 
 import unittest
 
-from autofire import AutoFire
+from aim import UpDownSweep
+from autofire import AutoFire, axis_signs
 from target_tracking import TrackingState
 
 C, T, N = TrackingState.CENTERED, TrackingState.TRACKING, TrackingState.NO_TARGET
@@ -55,6 +56,47 @@ class AutoFireTests(unittest.TestCase):
         af = AutoFire(armed=False)
         for i in range(100):
             self.assertEqual(self.step(af, i * 0.1), (None, False))
+
+
+class BandDirectionTests(unittest.TestCase):
+    """The burst must sweep ABOVE the flame on either wiring."""
+
+    def run_band(self, pan_invert: bool, tilt_invert: bool):
+        left_sign, up_sign = axis_signs(pan_invert, tilt_invert)
+        sweep = UpDownSweep(7.75, 2.0, 4.0, 5.0, 2, left_sign=left_sign, up_sign=up_sign)
+        # Simulate the head in camera terms: + up = camera up, + left = camera left.
+        up = left = 0.0
+        ups, lefts = [], []
+        t = 0.0
+        while not sweep.done and t < 20:
+            pan_cmd, tilt_cmd = sweep.update(t)
+            if sweep.pump_wanted:
+                ups.append(up)
+                lefts.append(left)
+            for cmd, axis in ((pan_cmd, "pan"), (tilt_cmd, "tilt")):
+                if cmd:
+                    v = 1 + 24 * abs(cmd) / 25
+                    v = v if cmd > 0 else -v
+                    # a + command turns the camera left by left_sign, up by up_sign
+                    if axis == "pan":
+                        left += v * left_sign * 0.033
+                    else:
+                        up += v * up_sign * 0.033
+            t += 0.033
+        return ups, lefts
+
+    def check(self, pan_invert: bool, tilt_invert: bool) -> None:
+        ups, lefts = self.run_band(pan_invert, tilt_invert)
+        self.assertGreater(len(ups), 60)
+        self.assertGreater(min(ups), 3.0)   # never aims below ~3.75 deg over the flame
+        self.assertGreater(max(ups), 11.0)  # reaches the 10 ft arc and beyond
+        self.assertTrue(all(1.0 < l < 3.0 for l in lefts))  # held ~2 deg LEFT
+
+    def test_rewired_tower(self) -> None:  # PAN_INVERT False, TILT_INVERT True
+        self.check(False, True)
+
+    def test_original_tower(self) -> None:  # PAN_INVERT True, TILT_INVERT False
+        self.check(True, False)
 
 
 if __name__ == "__main__":

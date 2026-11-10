@@ -67,7 +67,7 @@ class SweepAfterHomeTests(unittest.TestCase):
         from patrol import HomeReturn
 
         p = PanPatrol(enabled=True, pan_command=6.0, idle_s=3.0)
-        h = HomeReturn(after_s=5.0)
+        h = HomeReturn(after_s=5.0, min_track_frames=1)
         h.update(0.0, TrackingState.TRACKING, True)
         p.update(0.0, TrackingState.TRACKING, True)
         for now in (1.0, 4.0, 5.9):
@@ -144,10 +144,22 @@ class StartupTiltTests(unittest.TestCase):
 class HomeReturnTests(unittest.TestCase):
     TRACK = TrackingState.TRACKING
 
+    def test_brief_glimpse_does_not_count_as_a_target(self) -> None:
+        from patrol import HomeReturn
+
+        h = HomeReturn(after_s=2.0, min_track_frames=15)
+        for i in range(3):  # tracked for 3 frames only
+            h.update(i * 0.03, self.TRACK, True)
+        self.assertFalse(h.had_target)  # the sweep is not held back
+        self.assertFalse(h.update(10.0, IDLE, False))
+        for i in range(15):  # a real track
+            h.update(20 + i * 0.03, self.TRACK, True)
+        self.assertTrue(h.had_target)
+
     def test_goes_home_once_after_a_tracked_flame_is_gone(self) -> None:
         from patrol import HomeReturn
 
-        h = HomeReturn(after_s=2.0)
+        h = HomeReturn(after_s=2.0, min_track_frames=1)
         self.assertFalse(h.update(0.0, self.TRACK, True))
         self.assertFalse(h.update(1.0, IDLE, False))  # flame just went out
         self.assertFalse(h.update(2.9, IDLE, False))
@@ -157,7 +169,7 @@ class HomeReturnTests(unittest.TestCase):
     def test_flicker_back_restarts_the_wait(self) -> None:
         from patrol import HomeReturn
 
-        h = HomeReturn(after_s=2.0)
+        h = HomeReturn(after_s=2.0, min_track_frames=1)
         h.update(0.0, self.TRACK, True)
         h.update(1.0, IDLE, False)
         h.update(2.5, IDLE, True)  # flame back before 2 s
@@ -167,7 +179,7 @@ class HomeReturnTests(unittest.TestCase):
     def test_never_without_a_track_or_while_pumping(self) -> None:
         from patrol import HomeReturn
 
-        h = HomeReturn(after_s=2.0)
+        h = HomeReturn(after_s=2.0, min_track_frames=1)
         self.assertFalse(h.update(10.0, IDLE, False))  # nothing was ever tracked
         h.update(11.0, self.TRACK, True)
         self.assertFalse(h.update(12.0, IDLE, False, pump_on=True))
