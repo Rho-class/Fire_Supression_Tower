@@ -106,7 +106,7 @@ constexpr float PAN_TILT_EPS = 0.001f;
 constexpr float PAN_GEAR_RATIO  = 8.0f;     // 8:1 - motor turns 8x per head turn
 constexpr float TILT_GEAR_RATIO = 5.0f;     // ~5:1 - motor turns ~5x per head turn
 constexpr float PAN_LIMIT_DEG   = 45.0f;    // each side of centre
-constexpr float TILT_LIMIT_DEG  = 20.0f;    // up and down from level
+constexpr float TILT_LIMIT_DEG  = 30.0f;    // up and down from level (was 20: low/high candles + the spray band hit it)
 
 // The hose pulls the head down about this far while the motors are unpowered
 // (levelling took 27 deg of positive tilt steps, which raise the camera).
