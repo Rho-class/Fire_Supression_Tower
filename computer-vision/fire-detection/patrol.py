@@ -1,9 +1,7 @@
-"""Search patrol: sweep the pan while no flame is in view.
+"""Search patrol (a raster scan while no flame is in view), homing helpers.
 
-The laptop drives the sweep with ordinary PAN commands; the firmware stops the
-pan at its soft limit (+/- PAN_LIMIT_DEG) and prints "LIMIT pan reached", which
-reverses the sweep. The firmware keeps owning the limits, so the patrol can
-never drive the head past them.
+The firmware keeps owning the soft limits, so the scan can never drive the head
+past them. Positions come from its POS reply to '?'.
 """
 
 from __future__ import annotations
@@ -11,9 +9,11 @@ from __future__ import annotations
 import re
 
 from aim import command_for_speed
+from autofire import axis_signs
 from config import (
     HOME_AFTER_LOST_S, LEVEL_PAN_SPEED_DEG_S, LEVEL_TILT_SPEED_DEG_S, PATROL_ENABLED,
-    PATROL_IDLE_S, PATROL_PAN_COMMAND,
+    PATROL_IDLE_S, PATROL_PAN_HALF_DEG, PATROL_PAN_SPEED_DEG_S, PATROL_TILT_ROWS_DEG,
+    PATROL_TILT_SPEED_DEG_S,
 )
 from target_tracking import TrackingState
 
@@ -34,28 +34,64 @@ def _axis_command(error_deg: float, max_deg_s: float) -> float:
 
 
 class PanPatrol:
+    """Raster search: sweep a row, step the tilt, sweep back, while nothing is in view.
+
+    Rows are PATROL_TILT_ROWS_DEG from level (+ = camera up), each swept across
+    +/- PATROL_PAN_HALF_DEG, alternating direction. Positions come from the
+    firmware's POS reply to '?', which the patrol asks for while it runs. Any
+    flame candidate pauses the scan; it then carries on where it left off.
+    update() returns the pan command; the tilt command is in tilt_command.
+    """
+
     def __init__(
         self,
         enabled: bool = PATROL_ENABLED,
-        pan_command: float = PATROL_PAN_COMMAND,
         idle_s: float = PATROL_IDLE_S,
+        pan_half_deg: float = PATROL_PAN_HALF_DEG,
+        tilt_rows_deg: tuple[float, ...] = PATROL_TILT_ROWS_DEG,
+        pan_speed_deg_s: float = PATROL_PAN_SPEED_DEG_S,
+        tilt_speed_deg_s: float = PATROL_TILT_SPEED_DEG_S,
     ) -> None:
         self.enabled = enabled
-        self.pan_command = abs(pan_command)
         self.idle_s = idle_s
-        self.direction = 1
+        self.pan_half = abs(pan_half_deg)
+        self.rows = tuple(tilt_rows_deg) or (0.0,)
+        self.pan_speed = pan_speed_deg_s
+        self.tilt_speed = tilt_speed_deg_s
+        self.left_sign, self.up_sign = axis_signs()
         self.idle_since: float | None = None
-        self.active = False  # True while the patrol is sweeping
+        self.active = False  # True while the patrol is driving the head
+        self.row = 0
+        self.side = 1  # +1 / -1: the side of the row the sweep is heading to
+        self.target: tuple[float, float] | None = None  # firmware (pan, tilt) deg
+        self.position: tuple[float, float] | None = None  # last POS (pan, tilt)
+        self.tilt_command = 0.0
+        self.last_pos_ask = -1e9
+
+    def _row_tilt(self) -> float:
+        return self.up_sign * self.rows[self.row]
+
+    def _sweep_target(self) -> tuple[float, float]:
+        return self.side * self.left_sign * self.pan_half, self._row_tilt()
 
     def pause(self) -> None:
-        """Hand the pan back to the tracker and restart the idle wait."""
+        """Hand the head back to the tracker; the scan resumes where it left off."""
         self.idle_since = None
         self.active = False
+        self.tilt_command = 0.0
 
     def start_after(self, now: float, delay_s: float) -> None:
-        """Begin sweeping delay_s from now (e.g. once a return-home move ends)."""
-        self.active = False
+        """Restart the scan from the first row delay_s from now (the head is centred)."""
+        self.pause()
+        self.row, self.side, self.target = 0, 1, None
         self.idle_since = now - self.idle_s + delay_s
+
+    def wants_position(self, now: float) -> bool:
+        """True when the caller should send '?' (the firmware replies with POS)."""
+        if self.active and now - self.last_pos_ask >= POS_EVERY_S:
+            self.last_pos_ask = now
+            return True
+        return False
 
     def update(
         self,
@@ -66,9 +102,8 @@ class PanPatrol:
     ) -> float | None:
         """Pan command to send instead of the tracker's, or None to use the tracker's.
 
-        Any flame candidate, an active track, or a running pump stops the sweep at
-        once (the tracker then sends 0 or its correction), so a candidate can be
-        confirmed without the camera moving under it.
+        Any flame candidate, an active track, or a running pump stops the scan at
+        once, so a candidate can be confirmed without the camera moving under it.
         """
         if not self.enabled or flame_detected or pump_on or tracking_state in _TRACKER_OWNS:
             self.pause()
@@ -77,13 +112,34 @@ class PanPatrol:
             self.idle_since = now
         if now - self.idle_since < self.idle_s:
             return None
-        self.active = True
-        return self.direction * self.pan_command
+        if not self.active:
+            self.active = True
+            self.position = None  # the head may have moved: wait for a fresh POS
+            if self.target is None:
+                self.target = self._sweep_target()
+        self.tilt_command = 0.0
+        if self.position is None:
+            return 0.0  # hold still until the first position report
+        pan, tilt = self.position
+        pan_cmd = _axis_command(self.target[0] - pan, self.pan_speed)
+        tilt_cmd = _axis_command(self.target[1] - tilt, self.tilt_speed)
+        if not pan_cmd and not tilt_cmd:
+            # Reached the end of the row: next row, sweeping back the other way.
+            self.row = (self.row + 1) % len(self.rows)
+            self.side = -self.side
+            self.target = self._sweep_target()
+            self.position = None  # do not act on the old report
+            return 0.0
+        if tilt_cmd:
+            pan_cmd = 0.0  # change rows first, then sweep along the row
+        self.tilt_command = tilt_cmd
+        return pan_cmd
 
     def on_message(self, message: str) -> bool:
-        """Reverse at a pan limit. Returns True if the sweep direction changed."""
-        if self.active and message.startswith("LIMIT pan"):
-            self.direction = -self.direction
+        """Read POS replies. Returns True if the message was a position."""
+        match = _POS.match(message)
+        if match:
+            self.position = (float(match.group(1)), float(match.group(2)))
             return True
         return False
 

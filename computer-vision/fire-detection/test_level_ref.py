@@ -5,7 +5,7 @@ import unittest
 import cv2
 import numpy as np
 
-from level_ref import estimate_offset
+from level_ref import ReferenceLevel, estimate_offset
 
 RNG = np.random.default_rng(1)
 ROOM = cv2.GaussianBlur((RNG.random((900, 1500)) * 255).astype(np.uint8), (0, 0), 2)
@@ -40,6 +40,24 @@ class EstimateOffsetTests(unittest.TestCase):
     def test_unrelated_view_does_not_match(self) -> None:
         other = (np.random.default_rng(9).random((720, 1280)) * 255).astype(np.uint8)
         self.assertIsNone(estimate_offset(self.ref, cv2.GaussianBlur(other, (0, 0), 2)))
+
+
+class FailedSearchTests(unittest.TestCase):
+    def test_failed_search_returns_to_the_start(self) -> None:
+        other = (np.random.default_rng(9).random((720, 1280)) * 255).astype(np.uint8)
+        frame = cv2.GaussianBlur(other, (0, 0), 2)
+        level = ReferenceLevel(view(100, 100))
+        level.search = [10.0, -20.0]  # net -10 deg
+        t, moved = 0.0, []
+        for _ in range(200):
+            level.update(t, frame)
+            t += 0.05
+            if level.state in ("move", "return"):
+                moved.append((level.state, level.leveller.sign * level.up_sign,
+                              level.leveller.remaining))
+                level.leveller.state = "done"  # pretend the move finished
+        self.assertEqual(level.state, "failed")
+        self.assertEqual(moved[-1], ("return", 1.0, 10.0))  # back up the net 10 deg
 
 
 if __name__ == "__main__":

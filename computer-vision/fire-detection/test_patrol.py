@@ -12,61 +12,97 @@ def pos(pan: float, tilt: float) -> str:
     return f"POS pan {pan:.1f} deg (limit 45), tilt {tilt:.1f} deg (limit 20)"
 
 
-class PanPatrolTests(unittest.TestCase):
-    def patrol(self) -> PanPatrol:
-        return PanPatrol(enabled=True, pan_command=6.0, idle_s=3.0)
+def make(idle_s: float = 0.0, rows=(0.0, -20.0)) -> PanPatrol:
+    return PanPatrol(enabled=True, idle_s=idle_s, pan_half_deg=30.0, tilt_rows_deg=rows,
+                     pan_speed_deg_s=8.0, tilt_speed_deg_s=8.0)
 
-    def test_waits_for_idle_time_before_sweeping(self) -> None:
-        p = self.patrol()
+
+def drive(p: PanPatrol, steps: int = 3000, dt: float = 0.05):
+    """Simulate the head from level; returns each (pan, tilt) target in order."""
+    pan = tilt = 0.0
+    t, seen = 0.0, []
+    for _ in range(steps):
+        p.on_message(pos(pan, tilt))
+        cmd = p.update(t, IDLE, False)
+        if p.target is not None and (not seen or seen[-1] != p.target):
+            seen.append(p.target)
+        for value, axis in ((cmd or 0.0, "pan"), (p.tilt_command, "tilt")):
+            if value:
+                v = (1 + 24 * abs(value) / 25) * (1 if value > 0 else -1) * dt
+                if axis == "pan":
+                    pan += v
+                else:
+                    tilt += v
+        t += dt
+    return seen
+
+
+class RasterTests(unittest.TestCase):
+    def test_waits_for_idle_time(self) -> None:
+        p = make(idle_s=3.0)
         self.assertIsNone(p.update(0.0, IDLE, False))
         self.assertIsNone(p.update(2.9, IDLE, False))
-        self.assertEqual(p.update(3.0, IDLE, False), 6.0)
+        self.assertEqual(p.update(3.0, IDLE, False), 0.0)  # active, waiting for POS
+        self.assertTrue(p.active)
 
-    def test_reverses_on_pan_limit_only(self) -> None:
-        p = self.patrol()
+    def test_scans_rows_in_a_zigzag(self) -> None:
+        p = make()
+        up = p.up_sign
+        a, b = p.left_sign * 30.0, p.left_sign * -30.0
+        seen = drive(p)
+        expected = [(a, 0.0), (b, up * -20.0), (a, 0.0), (b, up * -20.0)]
+        self.assertEqual([(round(x, 1), round(y, 1) + 0.0) for x, y in seen[:4]],
+                         [(round(x, 1), round(y, 1) + 0.0) for x, y in expected])
+
+    def test_tilts_to_the_row_before_sweeping(self) -> None:
+        p = make()
+        p.update(0.0, IDLE, False)
+        p.target = (p.left_sign * 30.0, p.up_sign * -20.0)
+        p.on_message(pos(0.0, 0.0))
+        cmd = p.update(0.1, IDLE, False)
+        self.assertEqual(cmd, 0.0)
+        self.assertNotEqual(p.tilt_command, 0.0)
+
+    def test_candidate_stops_the_scan_and_it_resumes_where_it_left_off(self) -> None:
+        p = make(idle_s=3.0)
         p.update(0.0, IDLE, False)
         p.update(3.0, IDLE, False)
-        self.assertFalse(p.on_message("LIMIT tilt reached"))
-        self.assertTrue(p.on_message("LIMIT pan reached"))
-        self.assertEqual(p.update(3.1, IDLE, False), -6.0)
-        p.on_message("LIMIT pan reached")
-        self.assertEqual(p.update(3.2, IDLE, False), 6.0)
+        p.row, p.side, p.target = 1, -1, (1.0, 2.0)
+        self.assertIsNone(p.update(3.1, IDLE, True))  # flame candidate
+        self.assertFalse(p.active)
+        self.assertIsNone(p.update(3.2, IDLE, False))  # idle wait restarts
+        self.assertEqual(p.update(6.2, IDLE, False), 0.0)  # resumes
+        self.assertEqual((p.row, p.side, p.target), (1, -1, (1.0, 2.0)))
 
-    def test_candidate_or_track_stops_sweep_and_restarts_idle_wait(self) -> None:
-        p = self.patrol()
+    def test_track_or_pump_stops_the_scan(self) -> None:
+        p = make()
         p.update(0.0, IDLE, False)
-        self.assertEqual(p.update(3.0, IDLE, False), 6.0)
-        self.assertIsNone(p.update(3.1, IDLE, True))
-        self.assertIsNone(p.update(3.2, TrackingState.TRACKING, False))
-        self.assertIsNone(p.update(4.0, IDLE, False))
-        self.assertEqual(p.update(7.0, IDLE, False), 6.0)
+        self.assertIsNone(p.update(0.1, TrackingState.TRACKING, False))
+        self.assertIsNone(p.update(0.2, IDLE, False, pump_on=True))
 
-    def test_pump_on_stops_sweep(self) -> None:
-        p = self.patrol()
-        p.update(0.0, IDLE, False)
-        self.assertIsNone(p.update(5.0, IDLE, False, pump_on=True))
-
-    def test_limit_ignored_while_tracker_owns_pan(self) -> None:
-        p = self.patrol()
-        p.update(0.0, TrackingState.TRACKING, False)
-        self.assertFalse(p.on_message("LIMIT pan reached"))
-
-    def test_disabled_never_sweeps(self) -> None:
-        p = PanPatrol(enabled=False)
-        self.assertIsNone(p.update(100.0, IDLE, False))
-
-
-class SweepAfterHomeTests(unittest.TestCase):
-    def test_start_after_delays_sweep_from_now(self) -> None:
-        p = PanPatrol(enabled=True, pan_command=6.0, idle_s=3.0)
+    def test_start_after_restarts_from_the_first_row(self) -> None:
+        p = make(idle_s=3.0)
+        p.row, p.side, p.target = 1, -1, (1.0, 2.0)
         p.start_after(10.0, 1.5)
         self.assertIsNone(p.update(11.4, IDLE, False))
-        self.assertEqual(p.update(11.5, IDLE, False), 6.0)
+        self.assertIsNotNone(p.update(11.5, IDLE, False))
+        self.assertEqual((p.row, p.side), (0, 1))
 
-    def test_held_while_awaiting_home_then_sweeps_after_reset(self) -> None:
+    def test_asks_for_position_only_while_active(self) -> None:
+        p = make(idle_s=1.0)
+        p.update(0.0, IDLE, False)
+        self.assertFalse(p.wants_position(0.5))
+        p.update(1.0, IDLE, False)
+        self.assertTrue(p.wants_position(1.0))
+        self.assertFalse(p.wants_position(1.05))
+
+    def test_disabled_never_scans(self) -> None:
+        self.assertIsNone(PanPatrol(enabled=False).update(100.0, IDLE, False))
+
+    def test_held_while_awaiting_home_then_scans_after_reset(self) -> None:
         from patrol import HomeReturn
 
-        p = PanPatrol(enabled=True, pan_command=6.0, idle_s=3.0)
+        p = make(idle_s=3.0)
         h = HomeReturn(after_s=5.0, min_track_frames=1)
         h.update(0.0, TrackingState.TRACKING, True)
         p.update(0.0, TrackingState.TRACKING, True)
@@ -76,7 +112,7 @@ class SweepAfterHomeTests(unittest.TestCase):
         self.assertTrue(h.update(6.0, IDLE, False))
         p.start_after(6.0, 1.5)
         self.assertIsNone(p.update(7.0, IDLE, False, h.had_target))
-        self.assertEqual(p.update(7.5, IDLE, False, h.had_target), 6.0)
+        self.assertIsNotNone(p.update(7.5, IDLE, False, h.had_target))
 
 
 class HeadLevellerTests(unittest.TestCase):

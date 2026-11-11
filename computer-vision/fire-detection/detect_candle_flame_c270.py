@@ -24,7 +24,7 @@ Optional keys (none are required for detection):
        SPACE  pump on / off by hand (needs --motors; Q also turns it off)
        F  auto-fire on / off (off at start: locks 1 s, then sprays up/down)
        O  switch INDOOR / OUTDOOR mode    A  outdoor auto exposure on / off
-       P  search sweep on / off: with nothing in view for 3 s the pan sweeps
+       P  raster search on / off: with nothing in view for 3 s the head scans
           +/- 45 deg until a flame appears (on by default with --motors)
        L  L  level the head ONLY right after turning the 12 V on (press twice;
              once per run; undoes hose sag; --motors)
@@ -53,7 +53,7 @@ from config import (
     AIM_LEFT_DEG, CONFIRMATION_FRAMES, HOME_AFTER_LOST_S, NOZZLE_SPEED_MPS,
     PAN_INVERT, SWEEP_AFTER_HOME_S,
     PATROL_ENABLED, SIMULATION_MODE, TILT_INVERT,
-    STARTUP_TILT_DOWN_DEG,
+    STARTUP_TILT_DOWN_DEG, HOME_ON_UP_STOP,
 )
 from detect_candle_flame import (
     FlameDetection,
@@ -66,13 +66,15 @@ from motor_interface import (
     send_motor_command, send_pump,
 )
 from aim import FT, DistanceEstimator, launch_angle_deg
-from autofire import AutoFire
+from autofire import AutoFire, axis_signs
 from level_ref import load_reference, run_reference_level
+from stop_home import run_stop_home, save_forward_deg
 from patrol import HeadLeveller, HomeReturn, PanPatrol
 from target_tracking import ProportionalFlameTracker, TrackingState
 from two_stage_detector import (
     CandidateSettings,
     Detection,
+    Flame,
     FlickerGate,
     FlickerSettings,
     SpotRule,
@@ -146,8 +148,11 @@ OUTDOOR_BRIGHT_FLICKER = FlickerSettings()
 # H tilts forward TILT_LEVEL_OFFSET_DEG and calls it level, ^ / v nudge 1 deg, Z zero.
 # Firmware tilt + now moves the camera DOWN (checked on session 221145 after the
 # motor cables were re-done), so its '^' (+1) trim lowers it: I (up) sends 'v'.
-LEVEL_KEYS = {ord("l"): "H", ord("L"): "H", ord("i"): "v", ord("I"): "v",
-              ord("k"): "^", ord("K"): "^", ord("z"): "Z", ord("Z"): "Z"}
+# I raises the camera, K lowers it: the firmware's '^' is + tilt, which is camera
+# up only when TILT_INVERT says so (axis_signs).
+_TRIM_UP, _TRIM_DOWN = ("^", "v") if axis_signs()[1] > 0 else ("v", "^")
+LEVEL_KEYS = {ord("l"): "H", ord("L"): "H", ord("i"): _TRIM_UP, ord("I"): _TRIM_UP,
+              ord("k"): _TRIM_DOWN, ord("K"): _TRIM_DOWN, ord("z"): "Z", ord("Z"): "Z"}
 
 # Tags that are distances also set the water-arc aiming distance (overrides the size estimate).
 SET_DISTANCE_FT = {"1ft": 1.0, "5ft": 5.0, "7.5ft": 7.5, "10ft": 10.0}
@@ -161,6 +166,11 @@ HOLD_FRAMES = 3  # keep the last target through this many missed frames
 STICKY_PX = 120
 REFLECTION_MAX_GAP = 4.0
 LOCK_SWITCH_FRAMES = 15  # ~0.5 s unseen before switching to another candle
+# Hard to lock, easy to keep: a NEW flame must pass the full spot rule (lamps are
+# round or wide and fail it), but once a flame is being tracked a spot within
+# STICKY_PX of it only needs to be this tall for its width, so a flame leaning in
+# a breeze (its height / width sits right around 1.0) does not drop out.
+LOCKED_SPOT_MIN_ASPECT = 0.6
 PUMP_TOGGLE_MIN_S = 0.5  # holding SPACE auto-repeats; at most one pump switch per this
 # Startup help: the docstring's key section (empty if the heading is renamed).
 KEY_HELP = (__doc__ or "").partition("Optional keys")[2].strip()
@@ -537,6 +547,23 @@ def drop_reflections(result: FlameDetection) -> None:
         _set_detections(result, keep)
 
 
+def keep_locked_flame(detection: Detection, target: tuple[int, int] | None,
+                      rule: SpotRule) -> None:
+    """Accept a wider spot right next to a flame that is already being tracked."""
+    if target is None:
+        return
+    taken = {f.candidate for f in detection.flames}
+    tx, ty = target
+    for c in detection.candidates:
+        x1, y1, x2, y2 = c.box
+        width, height = max(1, x2 - x1), y2 - y1
+        near = ((x1 + x2) / 2 - tx) ** 2 + ((y1 + y2) / 2 - ty) ** 2 <= STICKY_PX ** 2
+        if (near and c not in taken and height <= rule.max_height
+                and c.contrast >= rule.min_contrast
+                and height / width >= LOCKED_SPOT_MIN_ASPECT):
+            detection.flames.append(Flame(c, 0.0, tuple(float(v) for v in c.box), "spot"))
+
+
 class TargetLock:
     """Stay on the flame being tracked instead of jumping between candles.
 
@@ -684,8 +711,13 @@ def run(args: argparse.Namespace) -> FlameDetection:
     patrol_hold_until = 0.0  # levelling keys pause the sweep briefly
     # Raise the head off the hose sag before searching (--level, or L L).
     leveller: HeadLeveller | None = None
-    level_reference = None if (args.no_level or simulate) else load_reference()
-    if level_reference is None and not args.no_level and not simulate and STARTUP_TILT_DOWN_DEG:
+    level_reference = (None if (args.no_level or simulate or HOME_ON_UP_STOP)
+                       else load_reference())
+    stop_homed = False  # True once the up-stop homing has finished
+    tilt_trim_up = 0.0  # net I / K degrees, saved into HOME_FORWARD_DEG on quit
+    home_forward_deg = 0.0  # the distance from the up stop this run homed to
+    if (level_reference is None and not args.no_level and not simulate
+            and STARTUP_TILT_DOWN_DEG and not HOME_ON_UP_STOP):
         leveller = HeadLeveller(STARTUP_TILT_DOWN_DEG)
         side = "down" if STARTUP_TILT_DOWN_DEG > 0 else "up"
         print(f"Startup: tilting the camera {abs(STARTUP_TILT_DOWN_DEG):g} deg {side} to "
@@ -719,6 +751,19 @@ def run(args: argparse.Namespace) -> FlameDetection:
         if not recorder.isOpened():
             raise RuntimeError(f"Could not create {video_path}")
         print(f"Recording raw video to {video_path} (frame N = CSV 'frame' N)", flush=True)
+    if HOME_ON_UP_STOP and not args.no_level and not simulate:
+        print("Homing: driving the tilt up to its stop, then forward to level...", flush=True)
+        homed = run_stop_home(
+            camera, WINDOW_TITLE,
+            lambda p, t: send_motor_command(p, t, simulation_mode=False, log_simulation=False),
+            send_command, read_messages)
+        stop_homed = homed.state == "done"
+        home_forward_deg = homed.forward_deg
+        camera.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # back to the flame exposure
+        set_exposure(camera, exposure)
+        print("Homing done: this is level (I / K trim it; Q saves the trim)." if stop_homed
+              else f"Homing NOT done ({homed.message}); starting from where the head is.",
+              flush=True)
     if level_reference is not None:
         # Move the head back to the taught level view (level_ref.py), then
         # restore the dark manual exposure the flame detector needs.
@@ -738,6 +783,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
                   "is (I / K adjust it).", flush=True)
     held_target: tuple[int, int] | None = None
     target_lock = TargetLock()  # stay on one candle when several are in view
+    tracker_locked = False  # last frame's tracker state: is a flame being tracked?
     if leveller is None:
         # Startup levelling is done (or not needed): sweep for a flame straight
         # away instead of waiting PATROL_IDLE_S first.
@@ -778,6 +824,8 @@ def run(args: argparse.Namespace) -> FlameDetection:
                     print(f"Outdoor limits: {'BRIGHT (sun)' if bright else 'DIM (dusk / shade)'}"
                           f" at exposure {exposure:g}", flush=True)
             detection = detector.detect(frame, active_mask)
+            if tracker_locked:
+                keep_locked_flame(detection, target_lock.target, detector.spot_rule)
             if mode == "outdoor":
                 if outdoor_bright:
                     keep_flickering_spots(detection, frame, bright_flicker_gate, None)
@@ -826,6 +874,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
             log.aim_deg = (round(autofire.spiral.tilt.position, 2)
                            if autofire.spiral is not None else "")
             tracking = tracker.update(target[0], target[1], width, height)
+            tracker_locked = tracking.state in {TrackingState.TRACKING, TrackingState.CENTERED}
             result["flame_confirmed"] = tracking.state in {
                 TrackingState.TRACKING, TrackingState.CENTERED,
             }
@@ -868,8 +917,10 @@ def run(args: argparse.Namespace) -> FlameDetection:
                 if leveller.wants_position(clock):
                     send_command("?")
                 patrol_pan = None
-            if patrol_pan is not None:  # searching: the patrol drives the pan
-                pan_out = patrol_pan
+            if patrol_pan is not None:  # searching: the raster scan drives the head
+                pan_out, tilt_out = patrol_pan, patrol.tilt_command
+                if not simulate and patrol.wants_position(clock):
+                    send_command("?")  # its POS reply tells the scan where the head is
             send_motor_command(
                 pan_out,
                 tilt_out,
@@ -921,7 +972,7 @@ def run(args: argparse.Namespace) -> FlameDetection:
             elif leveller is not None:
                 status = "STARTUP: tilting the camera to straight ahead"
             elif patrol.active:
-                status = "SEARCHING (pan sweep, P = stop)"
+                status = f"SEARCHING: raster row {patrol.row + 1}/{len(patrol.rows)} (P = stop)"
             else:
                 status = "SCANNING" + ("" if patrol.enabled or simulate else " (sweep off, P = on)")
             status += f"   [{motor_label}]" + (f" {last_motor_message}" if last_motor_message else "")
@@ -1055,6 +1106,8 @@ def run(args: argparse.Namespace) -> FlameDetection:
                             print(f"Levelling: tilting {STARTUP_TILT_DOWN_DEG:+g} deg "
                                   "(+ = down) to straight.", flush=True)
                             letters = ""
+                    if stop_homed and letters in (_TRIM_UP, _TRIM_DOWN):
+                        tilt_trim_up += 1.0 if letters == _TRIM_UP else -1.0
                     if letters:
                         # Stop any sweep first; the firmware refuses L while pan moves.
                         sweeping = patrol.active
@@ -1076,6 +1129,10 @@ def run(args: argparse.Namespace) -> FlameDetection:
                     patrol.pause()
                     print(f"Search sweep {'ON' if patrol.enabled else 'OFF'}", flush=True)
     finally:
+        if stop_homed and tilt_trim_up:
+            saved = save_forward_deg(tilt_trim_up, current=home_forward_deg)
+            print(f"Saved: level is now {saved:.1f} deg forward of the up stop "
+                  "(HOME_FORWARD_DEG).", flush=True)
         if simulate:
             pass  # no serial link was opened; nothing to stop
         else:

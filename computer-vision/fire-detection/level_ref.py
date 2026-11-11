@@ -95,6 +95,7 @@ class ReferenceLevel:
         self.last = None  # last (up, left, matches)
         self.misses = 0
         self.search = list(LEVEL_SEARCH_DEG)  # tilt steps to try while not in view
+        self.searched_up = 0.0  # net search tilt so far (+ = up), undone if it fails
 
     @property
     def finished(self) -> bool:
@@ -110,9 +111,16 @@ class ReferenceLevel:
                 if self.misses > 15:  # not in view here: tilt to the next search step
                     self.misses = 0
                     if not self.search:
-                        self.state, self.message = "failed", "could not find the reference view"
+                        if abs(self.searched_up) < 0.5:
+                            self.state, self.message = "failed", "could not find the reference view"
+                            return 0.0, 0.0, ""
+                        # Put the head back where the search started.
+                        self.leveller = HeadLeveller(self.up_sign * -self.searched_up)
+                        self.state = "return"
+                        self.message = "reference not found: returning to the start position"
                         return 0.0, 0.0, ""
                     step = self.search.pop(0)
+                    self.searched_up += step
                     self.leveller = HeadLeveller(self.up_sign * step)
                     self.state = "move"
                     self.message = f"reference not in view: searching {step:+.0f} deg"
@@ -138,6 +146,12 @@ class ReferenceLevel:
                 self.leveller = None
                 self.state, self.wait_until = "measure", now + 0.8
                 self.message = "checking again"
+            return pan, tilt, letters or ""
+        if self.state == "return":
+            pan, tilt, letters = self.leveller.update(now)
+            if self.leveller.done:
+                self.leveller = None
+                self.state, self.message = "failed", "could not find the reference view"
             return pan, tilt, letters or ""
         if self.state == "zeroing" and now >= self.wait_until:
             self.state = "done"  # no reply in time; the Z was still sent

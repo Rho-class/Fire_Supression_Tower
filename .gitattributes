@@ -1,1 +1,2 @@
 computer-vision/fire-detection/runs/candle_yolo/weights/best.pt filter=lfs diff=lfs merge=lfs -text
+computer-vision/fire-detection/runs/candle_room_hard_negative_v2/weights/best.pt filter=lfs diff=lfs merge=lfs -text

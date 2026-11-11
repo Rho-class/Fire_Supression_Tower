@@ -2,7 +2,10 @@
 
 import unittest
 
-from detect_candle_flame_c270 import LOCK_SWITCH_FRAMES, TargetLock, _set_detections, drop_reflections
+from detect_candle_flame_c270 import (
+    LOCK_SWITCH_FRAMES, TargetLock, _set_detections, drop_reflections, keep_locked_flame,
+)
+from two_stage_detector import Candidate, Detection, SpotRule
 
 
 def det(cx: int, cy: int, w: int = 12, h: int = 14) -> dict:
@@ -54,6 +57,33 @@ class TargetLockTests(unittest.TestCase):
         lock.apply(r)
         self.assertTrue(r["flame_detected"])
         self.assertEqual((r["center_x"], r["center_y"]), (490, 520))
+
+
+def spot(cx: int, cy: int, w: int, h: int, contrast: float = 200.0) -> Candidate:
+    box = (cx - w // 2, cy - h // 2, cx - w // 2 + w, cy - h // 2 + h)
+    return Candidate(box=box, area=w * h, contrast=contrast, warmth=25.0)
+
+
+class KeepLockedFlameTests(unittest.TestCase):
+    rule = SpotRule(max_height=120, min_contrast=150.0, min_aspect=1.0)
+
+    def kept(self, target, *cands) -> int:
+        d = Detection(list(cands))
+        keep_locked_flame(d, target, self.rule)
+        return len(d.flames)
+
+    def test_wide_spot_next_to_the_locked_flame_is_kept(self) -> None:
+        self.assertEqual(self.kept((640, 360), spot(650, 365, 20, 16)), 1)  # h/w 0.8
+
+    def test_wide_spot_far_from_the_flame_is_not(self) -> None:
+        self.assertEqual(self.kept((640, 360), spot(1000, 365, 20, 16)), 0)
+
+    def test_nothing_is_relaxed_without_a_locked_flame(self) -> None:
+        self.assertEqual(self.kept(None, spot(650, 365, 20, 16)), 0)
+
+    def test_very_wide_or_dim_spots_still_fail(self) -> None:
+        self.assertEqual(self.kept((640, 360), spot(650, 365, 40, 16)), 0)  # h/w 0.4
+        self.assertEqual(self.kept((640, 360), spot(650, 365, 20, 16, contrast=100.0)), 0)
 
 
 if __name__ == "__main__":

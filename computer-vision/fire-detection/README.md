@@ -4,6 +4,25 @@ This folder trains and runs a dedicated one-class YOLO26 detector. Its only
 class is `0 = flame`. It does not control the pump, motors, or ESP32, and it
 does not perform person detection. Those responsibilities remain separate.
 
+## Running on another laptop
+
+Needs Windows, an NVIDIA GPU (the C270 detector refuses to start without CUDA),
+Python 3.14, and [Git LFS](https://git-lfs.com) for the model.
+
+```powershell
+git lfs install
+git clone https://github.com/Rho-class/Fire_Supression_Tower.git
+cd Fire_Supression_Tower\computer-vision\fire-detection
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe .\detect_candle_flame_c270.py --motors --port COM5 --camera 1
+```
+
+If the repo is already cloned, run `git pull` then `git lfs pull`. Check Device
+Manager for the ESP32's COM port and change `--port` to match; if the wrong
+camera opens, try `--camera 0`. The trained model is in the repo. Datasets and
+recorded videos are not, so retraining needs them copied over separately.
+
 ## Environment and CUDA
 
 Use the project virtual environment from PowerShell:
