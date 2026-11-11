@@ -122,6 +122,19 @@ The levelling keys only work while no flame is being tracked.
 With `OWN_NETWORK = true`, join Wi-Fi `StepperControl` and open
 `http://192.168.4.1` (password in `main.cpp`).
 
+### Laptop vision over Wi-Fi (no USB data cable)
+
+The same WebSocket (port 81) accepts `PAN:/TILT:` and one-letter commands.
+Flash this firmware, join `StepperControl` (or put the ESP32 on your LAN with
+`OWN_NETWORK = false`), then from `computer-vision/fire-detection/`:
+
+```powershell
+.\.venv\Scripts\python.exe detect_candle_flame_c270.py --camera 1 --motors --wifi
+```
+
+STATUS / LIMIT / CENTRED lines are broadcast on the WebSocket so homing and
+patrol still work without USB serial.
+
 ## Workflow
 
 Follow the branching steps in the repository README:

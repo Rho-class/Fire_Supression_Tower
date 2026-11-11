@@ -57,6 +57,8 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <ESPmDNS.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 #include "web_page.h"
 
 // ---------- Wi-Fi ----------
@@ -160,10 +162,17 @@ long     trimSteps     = 0;                 // '^' / 'v' moves still to fold int
 // Commands from Wi-Fi (core 0) are handed to the motor loop (core 1) through this queue.
 QueueHandle_t commandQueue;
 
-// Latest status line, written by the motor loop and broadcast by the Wi-Fi task.
+// Latest status / event line, written by the motor loop and broadcast by Wi-Fi.
 portMUX_TYPE statusLock = portMUX_INITIALIZER_UNLOCKED;
-char statusLine[64] = "";
+char statusLine[96] = "";
 bool statusChanged  = false;
+
+// PAN/TILT from Wi-Fi arrives on core 0; the motor loop (core 1) applies it so
+// AccelStepper is never touched from the network task.
+portMUX_TYPE trackLock = portMUX_INITIALIZER_UNLOCKED;
+volatile bool trackPending = false;
+volatile float trackPan = 0.0f;
+volatile float trackTilt = 0.0f;
 
 WebServer        http(80);
 WebSocketsServer ws(81);
@@ -193,6 +202,16 @@ const char *stateName(int direction) {
   return direction < 0 ? "left" : direction > 0 ? "right" : "stopped";
 }
 
+// Serial + WebSocket (so a laptop on Wi-Fi sees CENTRED / LIMIT / STATUS too).
+void announce(const char *line) {
+  Serial.println(line);
+  portENTER_CRITICAL(&statusLock);
+  strncpy(statusLine, line, sizeof(statusLine) - 1);
+  statusLine[sizeof(statusLine) - 1] = '\0';
+  statusChanged = true;
+  portEXIT_CRITICAL(&statusLock);
+}
+
 // Format: STATUS <m1 state> <m1 rpm> <m2 state> <m2 rpm> <pump on/off>
 void printStatus() {
   char line[64];
@@ -200,11 +219,7 @@ void printStatus() {
            stateName(motors[0].direction), SPEED_RPM[motors[0].speedIndex],
            stateName(motors[1].direction), SPEED_RPM[motors[1].speedIndex],
            pumpOn ? "on" : "off");
-  Serial.println(line);
-  portENTER_CRITICAL(&statusLock);
-  strcpy(statusLine, line);
-  statusChanged = true;
-  portEXIT_CRITICAL(&statusLock);
+  announce(line);
 }
 
 void setPump(bool on) {
@@ -264,20 +279,22 @@ long limitStepsFor(float limitDeg, float gearRatio) {
 void zeroPositions() {
   for (Motor &m : motors) {
     if (m.direction != 0 || m.stepper.distanceToGo() != 0) {
-      Serial.println("ZERO refused: stop both motors first");
+      announce("ZERO refused: stop both motors first");
       return;
     }
   }
   for (Motor &m : motors) m.stepper.setCurrentPosition(0);
-  Serial.println("ZERO current position is now centre");
+  announce("ZERO current position is now centre");
 }
 
 void printPositions() {
-  Serial.printf("POS pan %.1f deg (limit %.0f), tilt %.1f deg (limit %.0f)\n",
-                motors[0].stepper.currentPosition() * 360.0f / (STEPS_PER_REV * PAN_GEAR_RATIO),
-                PAN_LIMIT_DEG,
-                motors[1].stepper.currentPosition() * 360.0f / (STEPS_PER_REV * TILT_GEAR_RATIO),
-                TILT_LIMIT_DEG);
+  char line[96];
+  snprintf(line, sizeof(line), "POS pan %.1f deg (limit %.0f), tilt %.1f deg (limit %.0f)",
+           motors[0].stepper.currentPosition() * 360.0f / (STEPS_PER_REV * PAN_GEAR_RATIO),
+           PAN_LIMIT_DEG,
+           motors[1].stepper.currentPosition() * 360.0f / (STEPS_PER_REV * TILT_GEAR_RATIO),
+           TILT_LIMIT_DEG);
+  announce(line);
 }
 
 void stopJog(Motor &m) {
@@ -311,7 +328,7 @@ bool bothIdle() {
 // 'H': undo the hose sag, then call the result level. Tilt only.
 void levelHead() {
   if (!bothIdle()) {
-    Serial.println("LEVEL refused: stop both motors first");
+    announce("LEVEL refused: stop both motors first");
     return;
   }
   Motor &tilt = motors[1];
@@ -319,7 +336,9 @@ void levelHead() {
   tilt.stepper.setCurrentPosition(0);
   tilt.stepper.moveTo(tiltSteps(TILT_LEVEL_OFFSET_DEG));
   levelPending = true;
-  Serial.printf("LEVEL moving tilt %+.1f deg\n", TILT_LEVEL_OFFSET_DEG);
+  char line[48];
+  snprintf(line, sizeof(line), "LEVEL moving tilt %+.1f deg", TILT_LEVEL_OFFSET_DEG);
+  announce(line);
 }
 
 // '^' / 'v': trim level. Moves the tilt one step and shifts "level" by the
@@ -328,14 +347,17 @@ void levelHead() {
 void nudgeTilt(int direction) {
   Motor &tilt = motors[1];
   if (tilt.direction != 0 || levelPending || centrePending) {
-    Serial.println("NUDGE refused: tilt is moving");
+    announce("NUDGE refused: tilt is moving");
     return;
   }
   long step = direction * tiltSteps(TILT_NUDGE_DEG);
   applySpeed(tilt);
   tilt.stepper.moveTo(tilt.stepper.targetPosition() + step);
   trimSteps += step;
-  Serial.printf("NUDGE tilt %s (level moves with it)\n", direction > 0 ? "up" : "down");
+  char line[48];
+  snprintf(line, sizeof(line), "NUDGE tilt %s (level moves with it)",
+           direction > 0 ? "up" : "down");
+  announce(line);
 }
 
 // 'C': drive both axes back to 0 (straight ahead and level).
@@ -347,7 +369,7 @@ void centreHead() {
   }
   levelPending = false;
   centrePending = true;
-  Serial.println("CENTRE moving");
+  announce("CENTRE moving");
 }
 
 // Called every loop: finish level / trim / centre moves once the motors arrive.
@@ -356,16 +378,16 @@ void finishPositioning() {
   if (trimSteps != 0 && tilt.direction == 0 && tilt.stepper.distanceToGo() == 0) {
     tilt.stepper.setCurrentPosition(tilt.stepper.currentPosition() - trimSteps);
     trimSteps = 0;
-    Serial.println("LEVEL trimmed: this tilt is level");
+    announce("LEVEL trimmed: this tilt is level");
   }
   if (levelPending && motors[1].direction == 0 && motors[1].stepper.distanceToGo() == 0) {
     levelPending = false;
     motors[1].stepper.setCurrentPosition(0);
-    Serial.println("LEVEL done: tilt is now 0");
+    announce("LEVEL done: tilt is now 0");
   }
   if (centrePending && bothIdle()) {
     centrePending = false;
-    Serial.println("CENTRED");
+    announce("CENTRED");
   }
 }
 
@@ -434,31 +456,20 @@ void handleTextPayload(const char *text, size_t len) {
     size_t copyLen = len < sizeof(line) - 1 ? len : sizeof(line) - 1;
     memcpy(line, text, copyLen);
     line[copyLen] = '\0';
-    // Trim trailing CR/LF for sscanf.
     while (copyLen > 0 && (line[copyLen - 1] == '\n' || line[copyLen - 1] == '\r')) {
       line[--copyLen] = '\0';
     }
-    // Queue a marker + line via one-char queue: process on motor core by
-    // enqueueing synthetic letters after parse on this core is unsafe for
-    // AccelStepper. Instead enqueue each resulting command letter.
     float pan = 0.0f;
     float tilt = 0.0f;
     if (sscanf(line, "PAN:%f,TILT:%f", &pan, &tilt) != 2) {
       return;
     }
-    if (PAN_AXIS_INVERT) {
-      pan = -pan;
-    }
-    if (TILT_AXIS_INVERT) {
-      tilt = -tilt;
-    }
-    char cmds[4];
-    size_t n = 0;
-    cmds[n++] = pan < -PAN_TILT_EPS ? 'L' : pan > PAN_TILT_EPS ? 'R' : 'X';
-    cmds[n++] = tilt < -PAN_TILT_EPS ? 'B' : tilt > PAN_TILT_EPS ? 'F' : 'Y';
-    for (size_t i = 0; i < n; i++) {
-      xQueueSend(commandQueue, &cmds[i], 0);
-    }
+    // Hand floats to the motor core (same proportional trackAxis path as USB).
+    portENTER_CRITICAL(&trackLock);
+    trackPan = pan;
+    trackTilt = tilt;
+    trackPending = true;
+    portEXIT_CRITICAL(&trackLock);
     return;
   }
   for (size_t i = 0; i < len; i++) {
@@ -560,10 +571,11 @@ void onWebSocket(uint8_t client, WStype_t type, uint8_t *payload, size_t length)
 }
 
 void startWiFi() {
-  WiFi.setSleep(false);                     // lower, steadier latency for the controls
   bool joined = false;
   if (!OWN_NETWORK) {
+    WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
     WiFi.setHostname(HOSTNAME);
     WiFi.begin(HOME_SSID, HOME_PASS);
     Serial.printf("Joining Wi-Fi \"%s\"", HOME_SSID);
@@ -582,10 +594,27 @@ void startWiFi() {
     }
   }
   if (!joined) {
+    // Clean bring-up: mode OFF first, then AP. setSleep after mode is set.
+    WiFi.persistent(false);
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(200);
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASS);
-    Serial.printf("Wi-Fi network \"%s\" ready. Join it, then open http://%s\n",
-                  AP_SSID, WiFi.softAPIP().toString().c_str());
+    delay(200);
+    WiFi.setSleep(false);
+    // Channel 1 + max TX; check return — softAPIP can look fine even when start fails.
+    const bool ok = WiFi.softAP(AP_SSID, AP_PASS, /*channel=*/1, /*ssid_hidden=*/false,
+                                /*max_connection=*/4);
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    Serial.printf("softAP ok=%d SSID=\"%s\" IP=%s MAC=%s ch=%d\n",
+                  ok ? 1 : 0, AP_SSID, WiFi.softAPIP().toString().c_str(),
+                  WiFi.softAPmacAddress().c_str(), WiFi.channel());
+    if (!ok) {
+      Serial.println("softAP FAILED — Wi-Fi will not appear on phone/laptop");
+    } else {
+      Serial.printf("Join \"%s\" / \"%s\", then open http://%s\n",
+                    AP_SSID, AP_PASS, WiFi.softAPIP().toString().c_str());
+    }
   }
 
   http.on("/", []() { http.send_P(200, "text/html", WEB_PAGE); });
@@ -597,6 +626,7 @@ void startWiFi() {
 
 void networkTask(void *) {
   char line[64];
+  uint32_t lastApLogMs = 0;
   for (;;) {
     http.handleClient();
     ws.loop();
@@ -611,12 +641,24 @@ void networkTask(void *) {
     portEXIT_CRITICAL(&statusLock);
     if (send) ws.broadcastTXT(line);
 
+    uint32_t now = millis();
+    if (now - lastApLogMs > 5000) {
+      lastApLogMs = now;
+      if (WiFi.getMode() & WIFI_AP) {
+        Serial.printf("AP alive ch=%d stations=%d\n",
+                      WiFi.channel(), WiFi.softAPgetStationNum());
+      }
+    }
+
     vTaskDelay(1);                          // let the Wi-Fi stack run
   }
 }
 
 // ---------- Setup / loop ----------
 void setup() {
+  // Weak USB cables can brown out during Wi-Fi TX and kill the soft-AP beacons.
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
   digitalWrite(PUMP_PIN, LOW);              // pump off before anything else
   pinMode(PUMP_PIN, OUTPUT);
   Serial.begin(115200);
@@ -655,6 +697,22 @@ void loop() {
     handleCommand(c);
   }
 
+  bool applyTrack = false;
+  float pan = 0.0f, tilt = 0.0f;
+  portENTER_CRITICAL(&trackLock);
+  if (trackPending) {
+    pan = trackPan;
+    tilt = trackTilt;
+    trackPending = false;
+    applyTrack = true;
+  }
+  portEXIT_CRITICAL(&trackLock);
+  if (applyTrack) {
+    char line[48];
+    snprintf(line, sizeof(line), "PAN:%.2f,TILT:%.2f", pan, tilt);
+    handlePanTiltLine(line);
+  }
+
   uint32_t now = millis();
   if (pumpOn && now - lastRxMs > PUMP_TIMEOUT_MS) setPump(false);
   finishPositioning();
@@ -665,7 +723,9 @@ void loop() {
     m.stepper.run();                        // must run as often as possible
     bool atLimit = m.direction != 0 && m.stepper.distanceToGo() == 0;
     if (atLimit && !m.limitReported) {
-      Serial.printf("LIMIT %s reached\n", i == 0 ? "pan" : "tilt");
+      char line[32];
+      snprintf(line, sizeof(line), "LIMIT %s reached", i == 0 ? "pan" : "tilt");
+      announce(line);
     }
     m.limitReported = atLimit;
   }
