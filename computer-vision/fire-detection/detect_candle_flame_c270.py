@@ -679,7 +679,8 @@ def run(args: argparse.Namespace) -> FlameDetection:
     simulate = not args.motors
     motor_label = "SIMULATION (no motors)"
     if args.motors:
-        port = connect(args.port)
+        link = "wifi" if args.wifi else None
+        port = connect(args.port, link=link, wifi_host=args.wifi_host)
         motor_label = f"MOTORS LIVE on {port}"
         print(f"ESP32 connected on {port}: motors will follow the flame. Q stops them.",
               flush=True)
@@ -1172,14 +1173,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--motors",
         action="store_true",
-        help="Drive the real pan/tilt motors through the ESP32 over USB serial. "
-        "Without it the detector only simulates. Power on the ESP32 with the head "
-        "pointing straight ahead (that position is the centre for its travel limits).",
+        help="Drive the real pan/tilt motors through the ESP32 (USB serial by default, "
+        "or Wi-Fi with --wifi). Without it the detector only simulates.",
+    )
+    parser.add_argument(
+        "--wifi",
+        action="store_true",
+        help="With --motors, send PAN/TILT over Wi-Fi WebSocket instead of USB. "
+        "Join the ESP32 AP \"StepperControl\" (http://192.168.4.1) or use --wifi-host "
+        "for a board on your LAN. No USB cable required.",
+    )
+    parser.add_argument(
+        "--wifi-host",
+        default=None,
+        help="ESP32 IP/hostname for --wifi (default: config.WIFI_HOST, usually 192.168.4.1).",
     )
     parser.add_argument(
         "--port",
         default=None,
-        help="ESP32 COM port (default: config.SERIAL_PORT, 'auto' finds the ESP32 by USB chip).",
+        help="ESP32 COM port for USB mode (default: config.SERIAL_PORT, 'auto' finds the "
+        "ESP32 by USB chip). Ignored with --wifi.",
     )
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)

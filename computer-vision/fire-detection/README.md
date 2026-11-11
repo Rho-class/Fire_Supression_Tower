@@ -397,24 +397,35 @@ candle images and zero false confirmation events in the available no-flame
 video. Continue recording longer and more varied video before treating the
 result as a safety claim.
 
-## ESP32 USB aiming link
+## ESP32 aiming link (USB or Wi-Fi)
 
-By default `SIMULATION_MODE = True` in `config.py` and the detector only prints
-`PAN:…,TILT:…` lines. To drive the steppers over USB:
+By default the detector only prints `PAN:…,TILT:…` unless you pass `--motors`.
+
+### USB (cable)
 
 1. Flash `firmware/` (`pio run -t upload`) and note the ESP32 COM port.
-2. Set `SERIAL_PORT` (for example `COM3`) and `SIMULATION_MODE = False` in
-   `config.py`.
-3. Install pyserial if needed: `python -m pip install pyserial`
-4. Run the detector (keep sending while a flame is tracked so the firmware jog
-   timeout does not stop the motors):
+2. Set `SERIAL_PORT` (or `"auto"`) in `config.py`.
+3. `python -m pip install pyserial`
+4. Run with `--motors` (and `--port COM14` if needed).
+
+### Wi-Fi (no cable) — branch `wifi_running`
+
+1. Flash the firmware that broadcasts STATUS/LIMIT/CENTRED over WebSocket.
+2. Power the ESP32 (USB power bank is fine; data wires unused). It opens AP
+   `StepperControl` / password in `firmware/src/main.cpp`.
+3. Join that Wi-Fi from the laptop (or set `OWN_NETWORK = false` so the ESP32
+   joins your LAN and use its IP with `--wifi-host`).
+4. `python -m pip install websocket-client`
+5. Run:
 
 ```powershell
-python detect_candle_flame.py --model runs\candle_yolo\weights\best.pt --camera 1 --width 1280 --height 720
+.\.venv\Scripts\python.exe detect_candle_flame_c270.py --camera 1 --motors --wifi
 ```
 
-5. Off-center flame → motors jog toward the error; centered / no flame / **Q** →
-   both axes stop (`PAN:0,TILT:0`). Pump is not commanded by this link.
+Default host is `192.168.4.1` (`config.WIFI_HOST`). Keep sending while tracking
+so the firmware jog timeout does not stop the motors. **SPACE** / **F** still
+control the pump — leave them alone for dry motor tests.
+
 6. If an axis is reversed, toggle `PAN_INVERT` / `TILT_INVERT` here or
    `PAN_AXIS_INVERT` / `TILT_AXIS_INVERT` in `firmware/src/main.cpp`.
 

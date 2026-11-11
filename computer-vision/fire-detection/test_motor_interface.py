@@ -1,6 +1,7 @@
-"""Unit tests for the ESP32 serial link, using a fake serial port (no hardware)."""
+"""Unit tests for the ESP32 serial / Wi-Fi link, using fakes (no hardware)."""
 
 from types import SimpleNamespace
+import time
 import unittest
 from unittest import mock
 
@@ -91,6 +92,45 @@ class ConnectTests(unittest.TestCase):
         with mock.patch("serial.Serial") as opened:
             mi.send_motor_command(1, 1, simulation_mode=True, log_simulation=False)
         opened.assert_not_called()
+
+
+class WifiConnectTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        mi.close_serial()
+
+    def test_wifi_connect_sends_pan_tilt_over_websocket(self) -> None:
+        class FakeWs:
+            def __init__(self, *args, **kwargs) -> None:
+                self.sent: list[str] = []
+                self._closed = False
+
+            def connect(self, url: str, timeout: float = 5.0) -> None:
+                self.url = url
+
+            def settimeout(self, _: float) -> None:
+                pass
+
+            def recv(self) -> str:
+                time.sleep(0.02)
+                if self._closed:
+                    raise OSError("closed")
+                return "STATUS stopped 30 stopped 30 off"
+
+            def send(self, payload: str) -> None:
+                self.sent.append(payload)
+
+            def close(self) -> None:
+                self._closed = True
+
+        fake = FakeWs()
+        with mock.patch.object(mi, "_import_websocket") as importer:
+            importer.return_value = SimpleNamespace(
+                WebSocket=lambda enable_multithread=True: fake
+            )
+            label = mi.connect(link="wifi", wifi_host="192.168.4.1", ready_timeout_s=1.0)
+        self.assertEqual(label, "wifi:192.168.4.1")
+        mi.send_motor_command(-1.25, 2.5, simulation_mode=False)
+        self.assertIn("PAN:-1.25,TILT:2.50", fake.sent)
 
 
 if __name__ == "__main__":

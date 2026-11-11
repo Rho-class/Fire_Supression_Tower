@@ -14,6 +14,14 @@ SIMULATION_MODE = False
 SERIAL_PORT = "COM5"
 SERIAL_BAUD = 115200
 
+# How the laptop talks to the ESP32 for --motors:
+#   "usb"  — USB serial (default; needs a cable)
+#   "wifi" — WebSocket to WIFI_HOST:WIFI_WS_PORT (no cable; join StepperControl
+#            or put the ESP32 on the same LAN with OWN_NETWORK=false)
+CONTROL_LINK = "usb"
+WIFI_HOST = "192.168.4.1"   # ESP32 soft-AP default; use the board's LAN IP if STA
+WIFI_WS_PORT = 81
+
 # Centering: an axis stops once the flame is within DEADZONE px of the image
 # centre (C270 ~21 px per degree, so 10 px ~ 0.5 deg) and only moves again past
 # DEADZONE_RELEASE px, so flame flicker near the edge does not chatter the
